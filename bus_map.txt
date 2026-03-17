@@ -1,0 +1,38 @@
+RiSC SYSTEM BUS MAP (Float32MultiArray)
+========================================
+
+COMMAND BUS (PC -> ALL TEENSYS)
+Topic: risc_command / xaxis_command
+Size: 15 Slots
+----------------------------------------
+[00] : state_request
+[01] : tool_rotation_target
+[02] : tool_swing_target
+[03] : x_lead_screw_target
+[04] : zL_target
+[05] : zE_target
+[06] : wheel_fL_vel
+[07] : wheel_fE_vel
+[08] : wheel_rL_vel
+[09] : wheel_rE_vel
+[10] : grip_open
+[11] : extractor_agitator_on
+[12] : conveyor_on
+[13] : adhesive_on
+[14] : trigger_homing
+
+STATUS BUS (TEENSY -> PC)
+Topic: toolhead_status / xaxis_status
+Size: 11 Slots
+----------------------------------------
+[00] : hardware_id
+[01] : pos_alpha
+[02] : pos_beta
+[03] : force_1
+[04] : force_2
+[05] : force_3
+[06] : force_4
+[07] : prox_sensor
+[08] : task_complete
+[09] : limit_min_hit
+[10] : limit_max_hit
