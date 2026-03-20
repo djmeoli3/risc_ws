@@ -15,18 +15,18 @@ case "$1" in
     docker run -dit --name $CONTAINER_NAME --privileged -v /dev:/dev -v /dev/bus/usb:/dev/bus/usb -v $(pwd):/risc_ws risc_image /bin/bash
     ;;
 
-  # --- FLASHING ---
+# --- FLASHING ---
   "tool-flash")
-    docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/toolhead && pio run -e fsm_control --target upload"
+    docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/toolhead && pio run -e tool_fsm --target upload"
     ;;
   "xaxis-flash")
-    docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/xaxis && pio run -e fsm_control --target upload"
+    docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/xaxis && pio run -e xaxis_fsm --target upload"
     ;;
   "ze-flash")
-    docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/zE && pio run -e ze_control --target upload"
+    docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/zE && pio run -e ze_fsm --target upload"
     ;;
   "zl-flash")
-    docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/zL && pio run -e zl_control --target upload"
+    docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/zL && pio run -e zl_fsm --target upload"
     ;;
 
   # --- AGENTS ---

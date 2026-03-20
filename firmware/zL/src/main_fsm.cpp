@@ -38,10 +38,17 @@ void subscription_callback(const void * msgin) {
     const std_msgs__msg__Float32MultiArray * msg = (const std_msgs__msg__Float32MultiArray *)msgin;
     if (msg->data.size >= 13) {
         int new_state = (int)msg->data.data[CMD_STATE_REQUEST];
-        if (new_state != live_state && (new_state <= 1)) { homing_complete = false; }
-        
+        if (new_state != live_state && (new_state <= 1)) { 
+            homing_complete = false; 
+        }
         live_state = new_state;
-        live_target = msg->data.data[ZL_TARGET_INDEX];
+        
+        // Smart Indexing: Selects index 4 for ZL (HW_ID 3.0) or 5 for ZE (HW_ID 4.0)
+        if (HW_ID == 3.0) {
+            live_target = msg->data.data[CMD_ZL_TARGET];
+        } else {
+            live_target = msg->data.data[CMD_ZE_TARGET];
+        }
     }
 }
 
@@ -56,7 +63,7 @@ void setup() {
     zaxis.setMaxSpeed(MOVE_SPEED_SCALED);
     zaxis.setAcceleration(2000.0 * (float)MICROSTEPS);
 
-    //100 microsecond interval for 10kHz pulse checks
+    // 100 microsecond interval for 10kHz pulse checks
     motorTimer.begin(motorTick, 100); 
 
     status_msg.data.data = s_buf;
@@ -88,7 +95,7 @@ void loop() {
     if (live_state == 1) { // HOMING
         if (!limitClose && !homing_complete) {
             zaxis.setMaxSpeed(HOMING_SPEED_SCALED);
-            zaxis.moveTo(-1000000);
+            zaxis.moveTo(-1000000); 
         } else {
             zaxis.stop();
             if (limitClose && !homing_complete) {
@@ -97,13 +104,17 @@ void loop() {
             }
         }
     } 
-    else if (live_state >= 2) { //navigation
+    else if (live_state >= 2) { // NAVIGATION & PLACEMENT
         long targetSteps = (long)(live_target * STEPS_PER_MM);
         
-        if ((zaxis.distanceToGo() > 0 && !limitFar) || (zaxis.distanceToGo() < 0 && !limitClose)) {
-            if (zaxis.targetPosition() != targetSteps) zaxis.moveTo(targetSteps);
-        } else {
-            zaxis.stop();
+        // 1. Update target position first to create a distanceToGo
+        if (zaxis.targetPosition() != targetSteps) {
+            zaxis.moveTo(targetSteps);
+        }
+
+        // 2. Safety: Only stop if moving toward a hit limit
+        if ((zaxis.distanceToGo() > 0 && limitFar) || (zaxis.distanceToGo() < 0 && limitClose)) {
+            zaxis.stop(); 
         }
     } else {
         zaxis.stop();
@@ -111,7 +122,7 @@ void loop() {
 
     static uint32_t lastP = 0;
     if (millis() - lastP > 50) {
-        status_msg.data.data[STAT_HW_ID]         = HW_ID; // 3.0 for ZL, 4.0 for ZE
+        status_msg.data.data[STAT_HW_ID]         = HW_ID; 
         status_msg.data.data[STAT_POS_ALPHA]     = (float)zaxis.currentPosition() / STEPS_PER_MM;
         status_msg.data.data[GRIPPER_DETECT]     = 0.0f;
         status_msg.data.data[STAT_PROX_SENSOR]   = 0.0f;

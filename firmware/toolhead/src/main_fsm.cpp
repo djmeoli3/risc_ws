@@ -34,6 +34,7 @@ volatile float live_rot_target = 0.0;
 volatile bool live_grip_open = false;
 volatile bool live_extractor_on = false;
 float currentSwingRaw = 0, currentRotateRaw = 0;
+float sErr = 0, rErr = 0; // Made global for Task Complete check
 
 // High-speed interrupt for smooth pulses
 void motorTick() {
@@ -74,6 +75,9 @@ void setup() {
     pinMode(ROTATE_ENA_PIN, OUTPUT);
     digitalWrite(SWING_ENA_PIN, HIGH); 
     digitalWrite(ROTATE_ENA_PIN, HIGH);
+    
+    // Gripper Switch Setup
+    pinMode(LIMIT_SWITCH_GRIPPER, INPUT_PULLUP);
 
     Wire.begin(); Wire1.begin();
     
@@ -110,7 +114,7 @@ void loop() {
 
     float ts = readRawEncoder(Wire1); if (ts != -999) currentSwingRaw = ts;
     float tr = readRawEncoder(Wire); if (tr != -999) currentRotateRaw = tr;
-    float sErr = live_swing_target - currentSwingRaw;
+    sErr = live_swing_target - currentSwingRaw;
 
     if (live_swing_target > 180 && currentSwingRaw < 100) sErr = (live_swing_target - 360) - currentSwingRaw;
     else if (live_swing_target < 100 && currentSwingRaw > 200) sErr = (live_swing_target + 360) - currentSwingRaw;
@@ -122,7 +126,7 @@ void loop() {
 
     float normalizedR = currentRotateRaw - ROTATE_HOME_RAW;
     if (normalizedR < 0) normalizedR += 360;
-    float rErr = live_rot_target - normalizedR;
+    rErr = live_rot_target - normalizedR;
     if (rErr > 180) rErr -= 360; 
     if (rErr < -180) rErr += 360;
 
@@ -139,11 +143,25 @@ void loop() {
         status_msg.data.data[STAT_HW_ID]         = 1.0f;
         status_msg.data.data[STAT_POS_ALPHA]     = currentSwingRaw; 
         status_msg.data.data[STAT_POS_BETA]      = currentRotateRaw;
-        status_msg.data.data[GRIPPER_DETECT]     = (float)digitalRead(LIMIT_SWITCH_GRIPPER); 
+        
+        // Corrected Gripper Detect (Index 3)
+        status_msg.data.data[GRIPPER_DETECT]     = (digitalRead(LIMIT_SWITCH_GRIPPER) == HIGH) ? 1.0f : 0.0f; 
+        
         status_msg.data.data[STAT_PROX_SENSOR]   = 0.0f;
-        status_msg.data.data[STAT_TASK_COMPLETE] = (swing.distanceToGo() == 0 && rotate.distanceToGo() == 0) ? 1.0f : 0.0f;
+        
+        // Corrected Task Complete (Index 5)
+        // Reports 1.0 only when error is within tolerance
+        bool atGoal = (abs(sErr) <= TOLERANCE && abs(rErr) <= TOLERANCE);
+        status_msg.data.data[STAT_TASK_COMPLETE] = atGoal ? 1.0f : 0.0f;
+        
         status_msg.data.data[STAT_LIMIT_MIN_HIT] = 0.0f;
         status_msg.data.data[STAT_LIMIT_MAX_HIT] = 0.0f;
+        
+        // Explicitly clear trailing indices to avoid "garbage" at index 8+
+        status_msg.data.data[8] = 0.0f;
+        status_msg.data.data[9] = 0.0f;
+        status_msg.data.data[10] = 0.0f;
+
         rcl_publish(&publisher, &status_msg, NULL);
         lastP = millis();
     }
