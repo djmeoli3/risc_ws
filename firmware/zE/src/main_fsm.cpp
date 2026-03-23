@@ -10,6 +10,7 @@
 
 // Objects
 AccelStepper zaxis(AccelStepper::DRIVER, LEAD_STEP_PIN, LEAD_DIR_PIN);
+AccelStepper yaxis(AccelStepper::DRIVER, WHEEL_STEP_PIN, WHEEL_DIR_PIN); 
 IntervalTimer motorTimer; 
 
 // ROS 2 Objects
@@ -25,13 +26,18 @@ rcl_node_t node;
 static float s_buf[11];
 static float c_buf[15];
 
-volatile float live_target = 0.0;
+volatile float live_z_target = 0.0;
+volatile float live_y_target = 0.0;
 volatile int live_state = 0;
 bool homing_complete = false;
+
+// 800 steps / 212.79mm = 3.759 steps/mm for wheels
+const float STEPS_PER_MM_Y = 3.7594; 
 
 // High-speed interrupt for smooth stepping
 void motorTick() {
     zaxis.run(); 
+    yaxis.run(); 
 }
 
 void subscription_callback(const void * msgin) {
@@ -43,27 +49,30 @@ void subscription_callback(const void * msgin) {
         }
         live_state = new_state;
         
-        // Smart Indexing: Selects index 4 for ZL (HW_ID 3.0) or 5 for ZE (HW_ID 4.0)
-        if (HW_ID == 3.0) {
-            live_target = msg->data.data[CMD_ZL_TARGET];
-        } else {
-            live_target = msg->data.data[CMD_ZE_TARGET];
-        }
+        //zE specific indexing
+        live_z_target = msg->data.data[CMD_ZE_TARGET];     //index 5
+        live_y_target = msg->data.data[CMD_WHEEL_FE_VEL];  //index 7
     }
 }
 
 void setup() {
     pinMode(LED_PIN, OUTPUT);
     pinMode(LEAD_ENA_PIN, OUTPUT);
+    pinMode(WHEEL_ENA_PIN, OUTPUT);
     digitalWrite(LEAD_ENA_PIN, LOW);
+    digitalWrite(WHEEL_ENA_PIN, LOW);
 
     pinMode(LIMIT_SWITCH_CLOSE, INPUT_PULLUP);
     pinMode(LIMIT_SWITCH_FAR, INPUT_PULLUP);
 
+    //z-axis config
     zaxis.setMaxSpeed(MOVE_SPEED_SCALED);
-    zaxis.setAcceleration(2000.0 * (float)MICROSTEPS);
+    zaxis.setAcceleration(1500.0 * (float)MICROSTEPS);
 
-    // 100 microsecond interval for 10kHz pulse checks
+    //y-axis config
+    yaxis.setMaxSpeed(20.0 * (float)MICROSTEPS);
+    yaxis.setAcceleration(10.0 * (float)MICROSTEPS);
+
     motorTimer.begin(motorTick, 100); 
 
     status_msg.data.data = s_buf;
@@ -76,11 +85,11 @@ void setup() {
     set_microros_transports();
     allocator = rcl_get_default_allocator();
     rclc_support_init(&support, 0, NULL, &allocator);
-    rclc_node_init_default(&node, NODE_NAME, "", &support);
+    rclc_node_init_default(&node, "ze_node", "", &support);
 
     const rosidl_message_type_support_t * ts = ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray);
-    rclc_subscription_init_default(&subscriber, &node, ts, SUB_TOPIC);
-    rclc_publisher_init_default(&publisher, &node, ts, PUB_TOPIC);
+    rclc_subscription_init_default(&subscriber, &node, ts, "z_command");
+    rclc_publisher_init_default(&publisher, &node, ts, "ze_status");
 
     rclc_executor_init(&executor, &support.context, 1, &allocator);
     rclc_executor_add_subscription(&executor, &subscriber, &cmd_msg, &subscription_callback, ON_NEW_DATA);
@@ -92,7 +101,7 @@ void loop() {
     bool limitClose = (digitalRead(LIMIT_SWITCH_CLOSE) == HIGH);
     bool limitFar = (digitalRead(LIMIT_SWITCH_FAR) == HIGH);
 
-    if (live_state == 1) { // HOMING
+    if (live_state == 1) { //homing
         if (!limitClose && !homing_complete) {
             zaxis.setMaxSpeed(HOMING_SPEED_SCALED);
             zaxis.moveTo(-1000000); 
@@ -103,32 +112,31 @@ void loop() {
                 homing_complete = true;
             }
         }
+        yaxis.setCurrentPosition(0); //zero immediate y position
+        yaxis.stop();
     } 
-    else if (live_state >= 2) { // NAVIGATION & PLACEMENT
-        long targetSteps = (long)(live_target * STEPS_PER_MM);
+    else if (live_state >= 2) { //navigation and placement
+        long targetStepsZ = (long)(live_z_target * STEPS_PER_MM);
+        long targetStepsY = (long)(live_y_target * STEPS_PER_MM_Y);
         
-        // 1. Update target position first to create a distanceToGo
-        if (zaxis.targetPosition() != targetSteps) {
-            zaxis.moveTo(targetSteps);
-        }
-
-        // 2. Safety: Only stop if moving toward a hit limit
+        if (zaxis.targetPosition() != targetStepsZ) zaxis.moveTo(targetStepsZ);
+        if (yaxis.targetPosition() != targetStepsY) yaxis.moveTo(targetStepsY);
         if ((zaxis.distanceToGo() > 0 && limitFar) || (zaxis.distanceToGo() < 0 && limitClose)) {
             zaxis.stop(); 
         }
     } else {
         zaxis.stop();
+        yaxis.stop();
     }
 
     static uint32_t lastP = 0;
     if (millis() - lastP > 50) {
-        status_msg.data.data[STAT_HW_ID]         = HW_ID; 
+        status_msg.data.data[STAT_HW_ID]         = 4.0f; //zE ID
         status_msg.data.data[STAT_POS_ALPHA]     = (float)zaxis.currentPosition() / STEPS_PER_MM;
-        status_msg.data.data[GRIPPER_DETECT]     = 0.0f;
-        status_msg.data.data[STAT_PROX_SENSOR]   = 0.0f;
-        status_msg.data.data[STAT_TASK_COMPLETE] = (zaxis.distanceToGo() == 0) ? 1.0f : 0.0f;
-        status_msg.data.data[STAT_LIMIT_MIN_HIT] = (float)digitalRead(LIMIT_SWITCH_CLOSE);
-        status_msg.data.data[STAT_LIMIT_MAX_HIT] = (float)digitalRead(LIMIT_SWITCH_FAR);
+        status_msg.data.data[STAT_POS_BETA]      = (float)yaxis.currentPosition() / STEPS_PER_MM_Y;
+        status_msg.data.data[STAT_TASK_COMPLETE] = (zaxis.distanceToGo() == 0 && yaxis.distanceToGo() == 0) ? 1.0f : 0.0f;
+        status_msg.data.data[STAT_LIMIT_MIN_HIT] = (float)limitClose;
+        status_msg.data.data[STAT_LIMIT_MAX_HIT] = (float)limitFar;
         rcl_publish(&publisher, &status_msg, NULL);
         lastP = millis();
     }

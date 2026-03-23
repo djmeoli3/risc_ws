@@ -10,8 +10,8 @@
 #define CMD_ZE_TARGET         5
 #define CMD_WHEEL_FL_VEL      6
 #define CMD_WHEEL_FE_VEL      7
-#define CMD_WHEEL_RL_VEL      8
-#define CMD_WHEEL_RE_VEL      9
+#define CMD_WHEEL_RL_VEL      8 //unused, left for 4 wheel drive potential
+#define CMD_WHEEL_RE_VEL      9 //unused, left for 4 wheel drive potential
 #define CMD_GRIP_OPEN         10
 #define CMD_EXTRACTOR_ON      11
 #define CMD_CONVEYOR_ON       12

@@ -34,7 +34,7 @@ volatile float live_rot_target = 0.0;
 volatile bool live_grip_open = false;
 volatile bool live_extractor_on = false;
 float currentSwingRaw = 0, currentRotateRaw = 0;
-float sErr = 0, rErr = 0; // Made global for Task Complete check
+float sErr = 0, rErr = 0;
 
 // High-speed interrupt for smooth pulses
 void motorTick() {
@@ -70,15 +70,15 @@ void setup() {
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, HIGH);
 
-    // Toolhead Enable: HIGH
     pinMode(SWING_ENA_PIN, OUTPUT); 
     pinMode(ROTATE_ENA_PIN, OUTPUT);
+    //toolhead NEMA 17s are high enable
     digitalWrite(SWING_ENA_PIN, HIGH); 
     digitalWrite(ROTATE_ENA_PIN, HIGH);
     
-    // Gripper Switch Setup
     pinMode(LIMIT_SWITCH_GRIPPER, INPUT_PULLUP);
 
+    //aboslute encoder wires
     Wire.begin(); Wire1.begin();
     
     swing.setMaxSpeed(500 * MICROSTEPS); 
@@ -143,21 +143,14 @@ void loop() {
         status_msg.data.data[STAT_HW_ID]         = 1.0f;
         status_msg.data.data[STAT_POS_ALPHA]     = currentSwingRaw; 
         status_msg.data.data[STAT_POS_BETA]      = currentRotateRaw;
-        
-        // Corrected Gripper Detect (Index 3)
         status_msg.data.data[GRIPPER_DETECT]     = (digitalRead(LIMIT_SWITCH_GRIPPER) == HIGH) ? 1.0f : 0.0f; 
-        
         status_msg.data.data[STAT_PROX_SENSOR]   = 0.0f;
-        
-        // Corrected Task Complete (Index 5)
-        // Reports 1.0 only when error is within tolerance
         bool atGoal = (abs(sErr) <= TOLERANCE && abs(rErr) <= TOLERANCE);
         status_msg.data.data[STAT_TASK_COMPLETE] = atGoal ? 1.0f : 0.0f;
-        
         status_msg.data.data[STAT_LIMIT_MIN_HIT] = 0.0f;
         status_msg.data.data[STAT_LIMIT_MAX_HIT] = 0.0f;
         
-        // Explicitly clear trailing indices to avoid "garbage" at index 8+
+        //explicitly clear trailing indices to prevent extra garbage/noise
         status_msg.data.data[8] = 0.0f;
         status_msg.data.data[9] = 0.0f;
         status_msg.data.data[10] = 0.0f;

@@ -40,6 +40,6 @@ const float STEPS_PER_MM = BASE_STEPS_PER_MM * (float)MICROSTEPS;
 const float MOVE_SPEED_SCALED    = 1000.0 * (float)MICROSTEPS;
 const float HOMING_SPEED_SCALED  = 1000.0 * (float)MICROSTEPS;
 const float CONVEYOR_SPEED_STEPS = 400.0 * (float)MICROSTEPS;
-const float PUMP_SPEED_STEPS     = 200.0 * (float)MICROSTEPS; // Initial placeholder
+const float PUMP_SPEED_STEPS     = 200.0 * (float)MICROSTEPS; //initial placeholder
 
 #endif
