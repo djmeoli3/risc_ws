@@ -1,9 +1,48 @@
 import ifcopenshell
 import ifcopenshell.geom
-import ifcopenshell.util.placement
 import csv
 import math
 import os
+import numpy as np
+
+def get_brick_metrics(brick, verts):
+    """
+    Calculates rotation using PCA (geometry-only) and checks for manual 180-degree flip.
+    """
+    #convert flat list to (x, y, z) tuples
+    nodes = np.array([verts[i:i+3] for i in range(0, len(verts), 3)])
+    
+    #2D footprint for rotation
+    points_2d = nodes[:, :2]
+    centroid = np.mean(points_2d, axis=0)
+    adjusted_points = points_2d - centroid
+    
+    #pca to find the principal axis (length of brick)
+    cov = np.cov(adjusted_points.T)
+    eigenvalues, eigenvectors = np.linalg.eig(cov)
+    
+    #eigenvector associated with the largest eigenvalue is the long axis
+    long_axis = eigenvectors[:, np.argmax(eigenvalues)]
+    angle_rad = math.atan2(long_axis[1], long_axis[0])
+    angle_deg = math.degrees(angle_rad) % 180 
+    
+    #normalize to hardware: 0 deg = parallel to y-axis
+    final_theta = (angle_deg - 90.0) % 180
+    if final_theta > 90: final_theta -= 180 #standardize [-90, 90] range
+
+    # ---VT LOGO BUILD ---
+    #manually flip the face 180 degrees if the brick is named with '_FLIP'
+    try:
+        obj_name = brick.Name if brick.Name else ""
+        if "_FLIP" in obj_name.upper():
+            if final_theta <= 0:
+                final_theta += 180
+            else:
+                final_theta -= 180
+    except:
+        pass
+
+    return round(final_theta, 2), centroid * 1000.0, np.min(nodes[:, 2]) * 1000.0
 
 def extract_bricks_to_csv(ifc_file_path, output_csv):
     if not os.path.exists(ifc_file_path):
@@ -12,99 +51,109 @@ def extract_bricks_to_csv(ifc_file_path, output_csv):
 
     model = ifcopenshell.open(ifc_file_path)
     
-    #type agnostic search to expand file creation flexibility
+    #targets standard architectural types, type agnostic
     brick_types = ["IfcMember", "IfcWall", "IfcBuildingElementProxy", "IfcWallStandardCase"]
     bricks = []
     for t in brick_types:
         bricks.extend(model.by_type(t))
     
-    if not bricks:
-        print("No bricks found! Ensure FreeCAD objects are exported as individual solids.")
-        return
-    
-    # --- PHYSICAL TOOL CONSTANTS  ---
-    CLAW_OPEN_WIDTH_MM = 100.0  #total width of gripper claws while open NEEDS TO BE EDITED
-    CLAW_VERTICAL_LIFT = 20.0   #drop offset for neighboring bricks
+    # --- BUILD VOLUME LIMITS & CONSTANTS ---
+    X_MAX_LIMIT = 800.0
+    Z_MAX_LIMIT = 1000.0
+    CLAW_OPEN_WIDTH_MM = 105.0  
+    CLAW_VERTICAL_LIFT = 20.0   
     
     settings = ifcopenshell.geom.settings()
     settings.set(settings.USE_WORLD_COORDS, True) 
     
-    brick_data = []
-
-    for i, brick in enumerate(bricks):
+    raw_data = []
+    for brick in bricks:
         try:
             shape = ifcopenshell.geom.create_shape(settings, brick)
-            verts = shape.geometry.verts 
-            grouped_verts = [verts[j:j+3] for j in range(0, len(verts), 3)]
-            
-            x_coords = [v[0] for v in grouped_verts]
-            y_coords = [v[1] for v in grouped_verts]
-            z_coords = [v[2] for v in grouped_verts]
-
-            #calculate midpoint for x y, scalee by 1000 for mm
-            dx = (max(x_coords) - min(x_coords)) * 1000.0
-            dy = (max(y_coords) - min(y_coords)) * 1000.0
-
-            x_mid = ((min(x_coords) + max(x_coords)) / 2.0) * 1000.0
-            y_mid = ((min(y_coords) + max(y_coords)) / 2.0) * 1000.0
-            z_bot = (min(z_coords)) * 1000.0 #get the bottom z face, matches "our zero"
-
-            #need to add rotation logic
-            theta_deg = 0.0 
-
-            brick_data.append({
-                'x': round(x_mid, 3), 
-                'y': round(y_mid, 3), 
-                'z': round(z_bot, 3), 
-                'theta': theta_deg, 
-                'drop_offset': 0.0,
-                'long_dim': max(dx, dy) #helper for neighbor algorithm
+            theta, center, z_bot = get_brick_metrics(brick, shape.geometry.verts)
+            raw_data.append({
+                'x': center[0], 
+                'y': center[1], 
+                'z': z_bot, 
+                'theta': theta,
+                'brick_obj': brick 
             })
-        except Exception as e:
-            print(f"Warning: Skipping brick {i}: {e}")
+        except:
+            continue
 
-    # --- SORTING FOR BUILD ORDER ---
-    #sort Z --> X --> Y
-    brick_data.sort(key=lambda b: (round(b['z'], 1), round(b['x'], 1), round(b['y'], 1)))
+    if not raw_data:
+        print("No valid geometry found.")
+        return
 
-    # --- FULL-JAW NEIGHBOR DETECTION ---
-    offset_count = 0
-    for i, b_curr in enumerate(brick_data):
-        b_curr['brick_id'] = f"B{i+1}"
+    # --- BOUNDING BOX NORMALIZATION ---
+    #ensures all coordinates start at (0,0,0) and remain positive
+    min_x = min(b['x'] for b in raw_data)
+    min_y = min(b['y'] for b in raw_data)
+    min_z = min(b['z'] for b in raw_data)
+    
+    normalized_data = []
+    for b in raw_data:
+        nx = round(b['x'] - min_x, 3)
+        ny = round(b['y'] - min_y, 3)
+        nz = round(b['z'] - min_z, 3)
+        
+        # --- VOLUME CLIPPING ---
+        #discard bricks that exceed the gantry's physical limits
+        if nx <= X_MAX_LIMIT and nz <= Z_MAX_LIMIT:
+            normalized_data.append({
+                'x': nx,
+                'y': ny,
+                'z': nz,
+                'theta': b['theta'],
+                'drop_offset': 0.0
+            })
+
+    cut_count = len(raw_data) - len(normalized_data)
+
+    # --- SORT BUILD ORDER ---
+    # Z -> X -> Y
+    normalized_data.sort(key=lambda b: (round(b['z'], 1), round(b['x'], 1), round(b['y'], 1)))
+ 
+    # --- ROTATIONAL NEIGHBOR DETECTION ---
+    #determines if the gripper needs a vertical clearance lift (drop_offset)
+    for i, b1 in enumerate(normalized_data):
+        b1['brick_id'] = f"B{i+1}"
+        
+        #transform into local space of the current brick
+        rad = math.radians(b1['theta'])
+        cos_t, sin_t = math.cos(rad), math.sin(rad)
+
         for j in range(i): 
-            b_prev = brick_data[j]
-            #ensure bricks are on the same layer
-            if abs(b_curr['z'] - b_prev['z']) < 2.0:
-                dist = math.sqrt((b_curr['x'] - b_prev['x'])**2 + (b_curr['y'] - b_prev['y'])**2)
+            b2 = normalized_data[j]
+            #only check bricks on the same layer
+            if abs(b1['z'] - b2['z']) < 2.0:
+                dx, dy = b2['x'] - b1['x'], b2['y'] - b1['y']
                 
-                #if the distance between centers is less than the toolhead's open footprint
-                if dist < CLAW_OPEN_WIDTH_MM:
-                    b_curr['drop_offset'] = CLAW_VERTICAL_LIFT
-                    offset_count += 1
-                    break 
+                #check neighbor position relative to jaw orientation
+                lx = dx * cos_t + dy * sin_t
+                ly = -dx * sin_t + dy * cos_t
+                
+                if abs(lx) < (CLAW_OPEN_WIDTH_MM / 2.0) and abs(ly) < 30.0:
+                    b1['drop_offset'] = CLAW_VERTICAL_LIFT
+                    break
 
-    #export to CSV
+    # --- CSV QUEUE EXPORT ---
     os.makedirs(os.path.dirname(output_csv), exist_ok=True)
     with open(output_csv, mode='w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['brick_id', 'x', 'y', 'z', 'theta', 'drop_offset'])
+        fieldnames = ['brick_id', 'x', 'y', 'z', 'theta', 'drop_offset']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for row in brick_data:
-            writer.writerow({k: v for k, v in row.items() if k != 'long_dim'})
+        writer.writerows(normalized_data)
             
-    # --- TERMINAL SUMMARY ---
-    print("-" * 30)
-    print(f"EXTRACTION SUMMARY")
-    print("-" * 30)
-    print(f"Total Bricks Found:  {len(brick_data)}")
-    print(f"Normal Placements:   {len(brick_data) - offset_count}")
-    print(f"Drop-Offset Needed:  {offset_count}")
-    print(f"CSV Saved To:        {output_csv}")
-    print("-" * 30)
+    print("-" * 40)
+    print(f"TRANSLATION COMPLETE")
+    print("-" * 40)
+    print(f"Bricks in Build:  {len(normalized_data)}")
+    print(f"Bricks Clipped:   {cut_count}")
+    print(f"Limits Applied:   X < {X_MAX_LIMIT}mm, Z < {Z_MAX_LIMIT}mm")
+    print(f"Coordinates:      Normalized to positive quadrant (0,0,0)")
+    print("-" * 40)
 
 if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    ifc_file = 'structure.ifc' 
-    csv_file = 'wall_design.csv'
-    
-    extract_bricks_to_csv(os.path.join(current_dir, ifc_file), os.path.join(current_dir, csv_file))
+    extract_bricks_to_csv(os.path.join(current_dir, 'structure.ifc'), os.path.join(current_dir, 'wall_design.csv'))

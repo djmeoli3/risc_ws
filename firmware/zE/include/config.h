@@ -20,6 +20,13 @@ const int MICROSTEPS = 4;
 
 #define LED_PIN 13
 
+// --- LIGHT STACK ---
+#define BUZZER_STACK 17
+#define GREEN_STACK 18
+#define YELLOW_STACK 19
+#define RED_STACK 20
+
+
 // --- PHYSICAL CONSTANTS ---
 const float BASE_STEPS_PER_MM = 78.740157; 
 const float STEPS_PER_MM = BASE_STEPS_PER_MM * (float)MICROSTEPS;

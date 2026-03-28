@@ -49,7 +49,7 @@ void subscription_callback(const void * msgin) {
         }
         live_state = new_state;
         
-        // ZL Specific Indexing
+        //zL Specific Indexing
         live_z_target = msg->data.data[CMD_ZL_TARGET];     //index 4
         live_y_target = msg->data.data[CMD_WHEEL_FL_VEL];  //index 6
     }
@@ -71,8 +71,8 @@ void setup() {
 
     //y-axis config
     yaxis.setPinsInverted(true, false, false); //the zL motor mirrors the zE motor, need to invert direction
-    yaxis.setMaxSpeed(20.0 * (float)MICROSTEPS);
-    yaxis.setAcceleration(10.0 * (float)MICROSTEPS);
+    yaxis.setMaxSpeed(80.0 * (float)MICROSTEPS);
+    yaxis.setAcceleration(40.0 * (float)MICROSTEPS);
 
     motorTimer.begin(motorTick, 100); 
 

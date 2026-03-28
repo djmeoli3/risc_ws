@@ -28,9 +28,9 @@ const int MICROSTEPS = 8;
 #define AS5600_ADDR 0x36
 
 // --- CALIBRATED LIMITS ---
-const float ROTATE_HOME_RAW = 272.5;
+const float ROTATE_HOME_RAW = 267.0;
 const float SWING_UP_RAW    = 248.0;
 const float SWING_DOWN_RAW  = 68.9;
-const float TOLERANCE       = 0.5; 
+const float TOLERANCE       = 1.0; 
 
 #endif
