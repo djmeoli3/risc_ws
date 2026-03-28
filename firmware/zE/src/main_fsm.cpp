@@ -59,6 +59,11 @@ void setup() {
     pinMode(LED_PIN, OUTPUT);
     pinMode(LEAD_ENA_PIN, OUTPUT);
     pinMode(WHEEL_ENA_PIN, OUTPUT);
+    pinMode(BUZZER_STACK, OUTPUT);
+    pinMode(GREEN_STACK, OUTPUT);
+    pinMode(YELLOW_STACK, OUTPUT);
+    pinMode(RED_STACK, OUTPUT);
+    digitalWrite(GREEN_STACK, OUTPUT);
     digitalWrite(LEAD_ENA_PIN, LOW);
     digitalWrite(WHEEL_ENA_PIN, LOW);
 
@@ -70,8 +75,8 @@ void setup() {
     zaxis.setAcceleration(1500.0 * (float)MICROSTEPS);
 
     //y-axis config
-    yaxis.setMaxSpeed(20.0 * (float)MICROSTEPS);
-    yaxis.setAcceleration(10.0 * (float)MICROSTEPS);
+    yaxis.setMaxSpeed(80.0 * (float)MICROSTEPS);
+    yaxis.setAcceleration(40.0 * (float)MICROSTEPS);
 
     motorTimer.begin(motorTick, 100); 
 
@@ -100,11 +105,16 @@ void loop() {
 
     bool limitClose = (digitalRead(LIMIT_SWITCH_CLOSE) == HIGH);
     bool limitFar = (digitalRead(LIMIT_SWITCH_FAR) == HIGH);
-
+    if (live_state == 0) {
+        digitalWrite(GREEN_STACK, HIGH);
+    }
     if (live_state == 1) { //homing
+        digitalWrite(GREEN_STACK, LOW);
+        digitalWrite(YELLOW_STACK,HIGH);
         if (!limitClose && !homing_complete) {
             zaxis.setMaxSpeed(HOMING_SPEED_SCALED);
-            zaxis.moveTo(-1000000); 
+            zaxis.moveTo(-1000000);
+            //digitalWrite(BUZZER_STACK, HIGH); 
         } else {
             zaxis.stop();
             if (limitClose && !homing_complete) {
@@ -116,6 +126,7 @@ void loop() {
         yaxis.stop();
     } 
     else if (live_state >= 2) { //navigation and placement
+        //digitalWrite(BUZZER_STACK, LOW); 
         long targetStepsZ = (long)(live_z_target * STEPS_PER_MM);
         long targetStepsY = (long)(live_y_target * STEPS_PER_MM_Y);
         

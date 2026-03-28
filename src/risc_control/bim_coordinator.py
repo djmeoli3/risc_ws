@@ -18,6 +18,10 @@ class CMD:
     WHEEL_FE_VEL      = 7   
     WHEEL_RL_VEL      = 8   #unused, left for 4 wheel drive potential
     WHEEL_RE_VEL      = 9   #unused, left for 4 wheel drive potential
+    WHEEL_FL_VEL      = 6   
+    WHEEL_FE_VEL      = 7   
+    WHEEL_RL_VEL      = 8   
+    WHEEL_RE_VEL      = 9   
     GRIP_OPEN         = 10
     EXTRACTOR_ON      = 11
     CONVEYOR_ON       = 12
@@ -55,6 +59,7 @@ class BIMCoordinator(Node):
         self.TARGET_SWING_UP = 248.0   
         self.TARGET_SWING_DOWN = 68.9  
         self.Z_SAFETY_MARGIN = 60.0  #mm above current layer
+        self.Z_SAFETY_MARGIN = 60.0  
         
         script_dir = os.path.dirname(os.path.abspath(__file__))
         self.csv_path = os.path.join(script_dir, 'wall_design.csv')
@@ -70,8 +75,11 @@ class BIMCoordinator(Node):
         self.ze_homed = False
         self.xax_homed = False
         
-        self.z_sync_start_time = None
-        self.z_sync_timeout = 2.0 
+        self.state_entry_time = 0
+        self.latch_ready = False 
+        self.nav_x_done = False
+        self.nav_zl_done = False
+        self.nav_ze_done = False
         self.debug_counter = 0
 
         self.tool_pub = self.create_publisher(Float32MultiArray, 'risc_command', 10)
@@ -84,7 +92,7 @@ class BIMCoordinator(Node):
         self.create_subscription(Float32MultiArray, 'ze_status', lambda m: self.status_cb(m, 4), 10)
 
         self.timer = self.create_timer(0.1, self.control_loop)
-        self.get_logger().info("BIM Coordinator Initialized with Latched Homing logic.")
+        self.get_logger().info("BIM Coordinator: Release-to-Lift dwell added.")
 
     def load_csv(self):
         if os.path.exists(self.csv_path):
@@ -92,39 +100,37 @@ class BIMCoordinator(Node):
                 reader = csv.DictReader(f)
                 for row in reader:
                     self.brick_queue.append(row)
-                self.get_logger().info(f"Successfully loaded {len(self.brick_queue)} bricks from CSV.")
-        else:
-            self.get_logger().error(f"CSV NOT FOUND at: {self.csv_path}")
+                self.get_logger().info(f"Loaded {len(self.brick_queue)} bricks.")
 
     def status_cb(self, msg, hw_id):
         self.status_data[hw_id] = msg.data
 
+    def change_state(self, new_state):
+        self.get_logger().info(f"Transitioning: {self.state.name} -> {new_state.name}")
+        self.state = new_state
+        self.state_entry_time = time.time()
+        self.latch_ready = False 
+        self.nav_x_done = False
+        self.nav_zl_done = False
+        self.nav_ze_done = False
+
     def is_ready(self, hw_id):
         if self.status_data.get(hw_id) is None: return False
+        if not self.latch_ready:
+            if self.status_data[hw_id][STAT.TASK_COMPLETE] < 0.5:
+                self.latch_ready = True
+            return False
         return self.status_data[hw_id][STAT.TASK_COMPLETE] > 0.5
-
-    def wait_for_user(self, prompt_message):
-        self.get_logger().info(f"\n>>> PAUSED: {prompt_message}")
-        while True:
-            user_input = input("Enter 'go' to continue or 'stop' to reset: ").lower()
-            if user_input == "go": return True
-            if user_input == "stop":
-                self.state = RobotState.IDLE
-                return False
 
     def control_loop(self):
         msg = Float32MultiArray()
         d = [0.0] * 15 
         d[CMD.STATE_REQUEST] = float(self.state.value)
         
-        # --- SMART SWING DEFAULT ---
         states_where_arm_is_down = [
-            RobotState.SWING_DOWN, 
-            RobotState.ROTATE_TO_TARGET, 
-            RobotState.LOWER_AND_PLACE, 
-            RobotState.RELEASE_BRICK, 
-            RobotState.LIFT_UP, 
-            RobotState.ROTATE_RESET
+            RobotState.SWING_DOWN, RobotState.ROTATE_TO_TARGET, 
+            RobotState.LOWER_AND_PLACE, RobotState.RELEASE_BRICK, 
+            RobotState.LIFT_UP, RobotState.ROTATE_RESET
         ]
         
         if self.state in states_where_arm_is_down:
@@ -132,143 +138,97 @@ class BIMCoordinator(Node):
         else:
             d[CMD.TOOL_SWING_TARGET] = self.TARGET_SWING_UP
         
-        # --- DYNAMIC TARGET CALCULATION (X, Y, Z) ---
         if self.current_brick:
-            #x target
             d[CMD.X_LEAD_TARGET] = float(self.current_brick['x'])
-            
-            #y target
             y_target = float(self.current_brick['y'])
-            d[CMD.WHEEL_FL_VEL] = y_target #index 6 zL wheel
-            d[CMD.WHEEL_FE_VEL] = y_target #index 7 zE wheel
+            d[CMD.WHEEL_FL_VEL] = y_target; d[CMD.WHEEL_FE_VEL] = y_target 
 
-            #z target logic
             current_z_layer = float(self.current_brick['z'])
             dynamic_hover = current_z_layer + self.Z_SAFETY_MARGIN
-            #hover vs. place logic
-            if self.state == RobotState.LOWER_AND_PLACE:
+            
+            if self.state == RobotState.LOWER_AND_PLACE or self.state == RobotState.RELEASE_BRICK:
                 target_z = current_z_layer + float(self.current_brick.get('drop_offset', 0.0))
             else:
                 target_z = dynamic_hover
                 
-            d[CMD.ZL_TARGET] = target_z
-            d[CMD.ZE_TARGET] = target_z
+            d[CMD.ZL_TARGET] = target_z; d[CMD.ZE_TARGET] = target_z
 
-        # --- FSM LOGIC ---
+        elapsed = time.time() - self.state_entry_time
+
         if self.state == RobotState.IDLE:
-            if self.wait_for_user("Ready to start HOMING?"):
-                self.zl_homed = self.ze_homed = self.xax_homed = False
-                self.state = RobotState.HOMING
+            if self.brick_queue: self.change_state(RobotState.HOMING)
 
         elif self.state == RobotState.HOMING:
-            d[CMD.X_LEAD_TARGET] = -1000.0 
-            d[CMD.ZL_TARGET] = -1000.0
-            d[CMD.ZE_TARGET] = -1000.0
-            
-            zl_msg = self.status_data.get(3)
-            ze_msg = self.status_data.get(4)
-            xax_msg = self.status_data.get(2)
-
+            d[CMD.X_LEAD_TARGET] = -1000.0; d[CMD.ZL_TARGET] = -1000.0; d[CMD.ZE_TARGET] = -1000.0
+            zl_msg = self.status_data.get(3); ze_msg = self.status_data.get(4); xax_msg = self.status_data.get(2)
             if zl_msg and zl_msg[STAT.LIMIT_MIN_HIT] > 0.5: self.zl_homed = True
             if ze_msg and ze_msg[STAT.LIMIT_MIN_HIT] > 0.5: self.ze_homed = True
             if xax_msg and xax_msg[STAT.LIMIT_MIN_HIT] > 0.5: self.xax_homed = True
-            
             if self.zl_homed and self.ze_homed and self.xax_homed:
-                if self.wait_for_user("ALL AXES HOMED (Y Zeroed). Proceed to Navigation?"):
-                    if len(self.brick_queue) > 0:
-                        self.current_brick = self.brick_queue.pop(0)
-                        self.state = RobotState.NAVIGATION
-                        #preemptively set targets for first brick
-                        d[CMD.X_LEAD_TARGET] = float(self.current_brick['x'])
-                        d[CMD.WHEEL_FL_VEL] = float(self.current_brick['y'])
-                        d[CMD.WHEEL_FE_VEL] = float(self.current_brick['y'])
-                        self.zl_homed = self.ze_homed = self.xax_homed = False
-                    else: self.state = RobotState.IDLE    
+                if self.brick_queue:
+                    self.current_brick = self.brick_queue.pop(0)
+                    self.change_state(RobotState.NAVIGATION)
 
         elif self.state == RobotState.NAVIGATION:
             #move to targeets, check for completion
-            if self.is_ready(2) and self.is_ready(3) and self.is_ready(4):
+            if self.is_ready(2): self.nav_x_done = True
+            if self.is_ready(3): self.nav_zl_done = True
+            if self.is_ready(4): self.nav_ze_done = True
+            if self.nav_x_done and self.nav_zl_done and self.nav_ze_done:
                 if self.status_data[2] and self.status_data[2][STAT.PROX_SENSOR] > 0.5:
-                    if self.wait_for_user("Brick detected. Ready for FEEDING?"):
-                        self.state = RobotState.FEEDING
-                        d[CMD.GRIP_OPEN] = 1.0; d[CMD.CONVEYOR_ON] = 1.0; d[CMD.EXTRACTOR_ON] = 1.0
+                    self.change_state(RobotState.FEEDING)
 
         elif self.state == RobotState.FEEDING:
             d[CMD.GRIP_OPEN] = 1.0; d[CMD.CONVEYOR_ON] = 1.0; d[CMD.EXTRACTOR_ON] = 1.0
             if self.status_data[1] and self.status_data[1][STAT.GRIPPER_DETECT] > 0.5:
-                d[CMD.CONVEYOR_ON] = 0.0; d[CMD.EXTRACTOR_ON] = 0.0
-                if self.wait_for_user("Brick in gripper. Ready to GRIP?"):
-                    self.state = RobotState.GRIP_ENGAGE
-                    d[CMD.GRIP_OPEN] = 0.0 #preemptively close gripper
+                if elapsed > 2.0: 
+                    d[CMD.CONVEYOR_ON] = 0.0; d[CMD.EXTRACTOR_ON] = 0.0
+                    self.change_state(RobotState.GRIP_ENGAGE)
 
         elif self.state == RobotState.GRIP_ENGAGE:
             d[CMD.GRIP_OPEN] = 0.0 
-            if self.is_ready(1):
-                if self.wait_for_user("Grip secure. Ready to SWING DOWN?"):
-                    self.state = RobotState.SWING_DOWN
-                    d[CMD.TOOL_SWING_TARGET] = self.TARGET_SWING_DOWN #preemptive action
+            if elapsed > 1.0: self.change_state(RobotState.SWING_DOWN)
 
         elif self.state == RobotState.SWING_DOWN:
-            d[CMD.TOOL_SWING_TARGET] = self.TARGET_SWING_DOWN
-            if self.is_ready(1):
-                if self.wait_for_user("Down. Ready to ROTATE?"):
-                    self.state = RobotState.ROTATE_TO_TARGET
-                    d[CMD.TOOL_ROT_TARGET] = float(self.current_brick['theta']) #preemptive action
+            if self.is_ready(1): self.change_state(RobotState.ROTATE_TO_TARGET)
 
         elif self.state == RobotState.ROTATE_TO_TARGET:
-            d[CMD.TOOL_SWING_TARGET] = self.TARGET_SWING_DOWN
             d[CMD.TOOL_ROT_TARGET] = float(self.current_brick['theta'])
-            if self.is_ready(1):
-                if self.wait_for_user("Aligned. Ready to LOWER AND PLACE?"):
-                    self.state = RobotState.LOWER_AND_PLACE
-                    target_z = float(self.current_brick['z']) + float(self.current_brick['drop_offset'])
-                    d[CMD.ZL_TARGET] = target_z; d[CMD.ZE_TARGET] = target_z #preemptive action
+            if self.is_ready(1) or elapsed > 1.5: self.change_state(RobotState.LOWER_AND_PLACE)
 
         elif self.state == RobotState.LOWER_AND_PLACE:
-            d[CMD.TOOL_SWING_TARGET] = self.TARGET_SWING_DOWN
             d[CMD.TOOL_ROT_TARGET] = float(self.current_brick['theta'])
-            target_z = float(self.current_brick['z']) + float(self.current_brick['drop_offset'])
-            d[CMD.ZL_TARGET] = target_z; d[CMD.ZE_TARGET] = target_z
             if self.is_ready(3) and self.is_ready(4):
-                if self.wait_for_user("Placed/Hovering. Ready to RELEASE?"):
-                    self.state = RobotState.RELEASE_BRICK
-                    d[CMD.GRIP_OPEN] = 1.0 #preemptive action
+                if elapsed > 2.0: self.change_state(RobotState.RELEASE_BRICK)
 
         elif self.state == RobotState.RELEASE_BRICK:
+            d[CMD.TOOL_ROT_TARGET] = float(self.current_brick['theta'])
             d[CMD.GRIP_OPEN] = 1.0 
-            if self.is_ready(1):
-                if self.wait_for_user("Released. Ready to LIFT UP?"):
-                    self.state = RobotState.LIFT_UP
-                    lift_z = float(self.current_brick['z']) + self.Z_SAFETY_MARGIN
-                    d[CMD.ZL_TARGET] = lift_z; d[CMD.ZE_TARGET] = lift_z #preemptive action
+            if elapsed > 1.0:
+                self.change_state(RobotState.LIFT_UP)
 
         elif self.state == RobotState.LIFT_UP:
+            d[CMD.GRIP_OPEN] = 1.0 
+            d[CMD.TOOL_ROT_TARGET] = float(self.current_brick['theta'])
             lift_z = float(self.current_brick['z']) + self.Z_SAFETY_MARGIN
             d[CMD.ZL_TARGET] = lift_z; d[CMD.ZE_TARGET] = lift_z
             if self.is_ready(3) and self.is_ready(4):
-                if self.wait_for_user("Clear. Ready to ROTATE RESET?"):
-                    self.state = RobotState.ROTATE_RESET
-                    d[CMD.TOOL_ROT_TARGET] = 0.0 #preemptive action
+                self.change_state(RobotState.ROTATE_RESET)
 
         elif self.state == RobotState.ROTATE_RESET:
+            d[CMD.GRIP_OPEN] = 0.0
             d[CMD.TOOL_ROT_TARGET] = 0.0 
-            if self.is_ready(1):
-                if self.wait_for_user("Rotated Home. Ready to SWING UP?"):
-                    self.state = RobotState.SWING_UP_RESET
-                    d[CMD.TOOL_SWING_TARGET] = self.TARGET_SWING_UP #preemptive action
+            if self.is_ready(1) or elapsed > 1.5: self.change_state(RobotState.SWING_UP_RESET)
 
         elif self.state == RobotState.SWING_UP_RESET:
-            d[CMD.TOOL_SWING_TARGET] = self.TARGET_SWING_UP
             if self.is_ready(1):
                 if self.brick_queue:
                     self.current_brick = self.brick_queue.pop(0)
-                    self.state = RobotState.NAVIGATION
-                else: self.state = RobotState.IDLE
+                    self.change_state(RobotState.NAVIGATION)
+                else: self.change_state(RobotState.IDLE)
 
         msg.data = d
-        self.tool_pub.publish(msg); 
-        self.xax_pub.publish(msg); 
-        self.z_pub.publish(msg)
+        self.tool_pub.publish(msg); self.xax_pub.publish(msg); self.z_pub.publish(msg)
 
 def main(args=None):
     rclpy.init(args=args)
