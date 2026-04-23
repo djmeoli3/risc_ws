@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHeaderView, QTabWidget, QProgressBar, QGridLayout,
                              QSizePolicy, QFrame, QFileDialog)
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread, QTimer
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtGui import QPainter, QColor, QImage, QPixmap, QFont, QTransform
 
 import rclpy
@@ -329,6 +330,13 @@ class RISCHMI(QMainWindow):
         self._setup_ui()
         self._start_ros()
         self._start_camera()
+
+        # Ctrl+Alt+T -- open terminal (useful when HMI is fullscreen)
+        QShortcut(QKeySequence("Ctrl+Alt+T"), self).activated.connect(
+            lambda: subprocess.Popen(["x-terminal-emulator"]))
+        # Ctrl+Alt+Q -- clean exit
+        QShortcut(QKeySequence("Ctrl+Alt+Q"), self).activated.connect(
+            lambda: QApplication.instance().quit())
         # Poll ROS topic list every 3s to update agent indicators
         self._agent_timer = QTimer()
         self._agent_timer.timeout.connect(self._check_agents)

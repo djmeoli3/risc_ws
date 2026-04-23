@@ -3,7 +3,3 @@ install/
 log/
 .pio/
 **/*.pyc
-
-#robot specific ignores
-*.ifc
-*.csv
