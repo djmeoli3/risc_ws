@@ -391,7 +391,7 @@ class RISCHMI(QMainWindow):
         left_col.setStyleSheet("background: #141414; border-right: 1px solid #1e1e1e;")
         left_layout = QVBoxLayout(left_col)
         left_layout.setSpacing(0)
-        left_layout.setContentsMargins(16, 16, 16, 16)
+        left_layout.setContentsMargins(8, 8, 8, 8)
 
         # ROS status banner
         self.status_label = QLabel("WAITING FOR ROS...")
@@ -418,10 +418,10 @@ class RISCHMI(QMainWindow):
             v.setContentsMargins(0,0,0,0)
             lbl = QLabel(axis_label)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("color: #e65100; font-size: 8px; letter-spacing: 2px; font-weight: bold;")
+            lbl.setStyleSheet("color: #e65100; font-size: 7px; letter-spacing: 1px; font-weight: bold;")
             val = QLabel("---")
             val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            val.setStyleSheet("color: #fff; font-size: 20px; font-family: 'Courier New'; font-weight: bold;")
+            val.setStyleSheet("color: #fff; font-size: 16px; font-family: 'Courier New'; font-weight: bold;")
             v.addWidget(lbl)
             v.addWidget(val)
             return w, val
@@ -515,7 +515,7 @@ class RISCHMI(QMainWindow):
         right_col.setStyleSheet("background: #111111;")
         right_layout = QVBoxLayout(right_col)
         right_layout.setSpacing(0)
-        right_layout.setContentsMargins(16, 16, 16, 16)
+        right_layout.setContentsMargins(8, 8, 8, 8)
 
         # ── RiSC Logo ─────────────────────────────────────────────────────
         logo_frame = QFrame()
@@ -529,19 +529,19 @@ class RISCHMI(QMainWindow):
         robot_label = QLabel()
         robot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _pix = QPixmap(_logo_path).scaledToHeight(
-            190, Qt.TransformationMode.SmoothTransformation)
+            100, Qt.TransformationMode.SmoothTransformation)
         robot_label.setPixmap(_pix)
 
         risc_label = QLabel("RiSC 1.0")
         risc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         risc_label.setStyleSheet(
-            "color: #e65100; font-size: 32px; font-weight: bold; "
-            "font-family: 'Courier New'; letter-spacing: 8px;")
+            "color: #e65100; font-size: 18px; font-weight: bold; "
+            "font-family: 'Courier New'; letter-spacing: 2px;")
 
         sub_label = QLabel("ROBOTICS IN SMART CONSTRUCTION")
         sub_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sub_label.setStyleSheet(
-            "color: #7b1d1d; font-size: 13px; letter-spacing: 3px; font-weight: bold;")
+            "color: #7b1d1d; font-size: 8px; letter-spacing: 1px; font-weight: bold;")
 
         divider_line = QFrame()
         divider_line.setFrameShape(QFrame.Shape.HLine)
@@ -560,7 +560,7 @@ class RISCHMI(QMainWindow):
         pump_title = QLabel("SYSTEM STATUS")
         pump_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         pump_title.setStyleSheet(
-            "color: #e65100; font-size: 13px; letter-spacing: 4px; font-weight: bold; padding-bottom: 12px;")
+            "color: #e65100; font-size: 11px; letter-spacing: 2px; font-weight: bold; padding-bottom: 8px;")
         right_layout.addWidget(pump_title)
 
         # Pump state indicator
@@ -589,7 +589,7 @@ class RISCHMI(QMainWindow):
 
         info_title = QLabel("SYSTEM INFO")
         info_title.setStyleSheet(
-            "color: #e65100; font-size: 11px; letter-spacing: 3px; font-weight: bold;")
+            "color: #e65100; font-size: 9px; letter-spacing: 2px; font-weight: bold;")
         info_layout.addWidget(info_title)
 
         for key, val in [("X RANGE",      "0 – ~700 mm"),
@@ -600,9 +600,9 @@ class RISCHMI(QMainWindow):
                          ("PROTOCOL",     "ROS2 HUMBLE")]:
             row = QHBoxLayout()
             k = QLabel(key)
-            k.setStyleSheet("color: #777; font-size: 13px; letter-spacing: 1px;")
+            k.setStyleSheet("color: #777; font-size: 10px; letter-spacing: 1px;")
             v = QLabel(val)
-            v.setStyleSheet("color: #bbb; font-size: 13px; font-family: 'Courier New';")
+            v.setStyleSheet("color: #bbb; font-size: 10px; font-family: 'Courier New';")
             v.setAlignment(Qt.AlignmentFlag.AlignRight)
             row.addWidget(k)
             row.addWidget(v)
@@ -612,7 +612,7 @@ class RISCHMI(QMainWindow):
         info_layout.addSpacing(8)
         agents_title = QLabel("AGENT STATUS")
         agents_title.setStyleSheet(
-            "color: #e65100; font-size: 11px; letter-spacing: 3px; font-weight: bold;")
+            "color: #e65100; font-size: 9px; letter-spacing: 2px; font-weight: bold;")
         info_layout.addWidget(agents_title)
 
         self.agent_indicators = {}
@@ -621,9 +621,9 @@ class RISCHMI(QMainWindow):
             dot = QLabel("●")
             dot.setStyleSheet("color: #333; font-size: 14px;")
             lbl = QLabel(agent_name)
-            lbl.setStyleSheet("color: #888; font-size: 13px; letter-spacing: 1px;")
+            lbl.setStyleSheet("color: #888; font-size: 10px; letter-spacing: 1px;")
             status = QLabel("OFFLINE")
-            status.setStyleSheet("color: #555; font-size: 12px; font-family: 'Courier New';")
+            status.setStyleSheet("color: #555; font-size: 10px; font-family: 'Courier New';")
             status.setAlignment(Qt.AlignmentFlag.AlignRight)
             row.addWidget(dot)
             row.addSpacing(6)
@@ -636,8 +636,8 @@ class RISCHMI(QMainWindow):
         right_layout.addWidget(info_frame)
         right_layout.addStretch()
 
-        layout.addWidget(left_col, 3)
-        layout.addWidget(right_col, 2)
+        layout.addWidget(left_col, 5)
+        layout.addWidget(right_col, 4)
         self.tabs.addTab(page, "Manual Control")
 
     def _setup_project_tab(self):
@@ -1215,5 +1215,7 @@ if __name__ == "__main__":
         QToolTip               { background: #1e1e1e; color: #e65100; border: 1px solid #e65100; }
     """)
     window = RISCHMI()
-    window.showFullScreen()  # fullscreen on 1024x600 touchscreen
+    window.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+    window.setGeometry(0, 0, 1024, 600)
+    window.show()
     sys.exit(app.exec())
