@@ -6,10 +6,10 @@ CONTAINER_NAME="risc_main"
 # port names -- set by udev rules in /etc/udev/rules.d/99-risc.rules
 # these are stable symlinks regardless of plug order
 # ---------------------------------------------------------------------------
-XAXIS_PORT="/dev/ttyACM0"
-TOOLHEAD_PORT="/dev/ttyACM1"
-ZE_PORT="/dev/ttyACM2"
-ZL_PORT="/dev/ttyACM3"
+XAXIS_PORT="/dev/risc_xaxis"
+TOOLHEAD_PORT="/dev/risc_toolhead"
+ZE_PORT="/dev/risc_ze"
+ZL_PORT="/dev/risc_zl"
 
 ROS_SOURCE="source /opt/ros/humble/setup.bash && source /risc_ws/install/local_setup.bash"
 MICROROS_SOURCE="source /microros_ws/install/local_setup.bash"
@@ -41,14 +41,74 @@ case "$1" in
     ;;
 
   # ---------------------------------------------------------------------------
-  # autostart -- launches all agents + coordinator in background
-  # called by systemd on boot, or manually for a full system start
+  # dockerless -- run everything directly on host (no docker required)
+  # requires micro-ROS agent built at ~/microros_ws
   # ---------------------------------------------------------------------------
+  "install-agent")
+    echo "Building micro-ROS agent on host..."
+    mkdir -p ~/microros_ws/src
+    cd ~/microros_ws/src
+    git clone -b humble https://github.com/micro-ROS/micro_ros_setup.git
+    cd ~/microros_ws
+    source /opt/ros/humble/setup.bash
+    rosdep update
+    rosdep install --from-paths src --ignore-src -y
+    colcon build
+    source install/local_setup.bash
+    ros2 run micro_ros_setup create_agent_ws.sh
+    ros2 run micro_ros_setup build_agent.sh
+    echo "source ~/microros_ws/install/local_setup.bash" >> ~/.bashrc
+    echo "Done. Restart terminal then run: ./risc.sh start-all"
+    ;;
+
+  "start-all")
+    # start all agents + coordinator on host, no docker
+    source ~/microros_ws/install/local_setup.bash
+    echo "Starting agents..."
+    ros2 run micro_ros_agent micro_ros_agent serial --dev $TOOLHEAD_PORT -v3 &
+    ros2 run micro_ros_agent micro_ros_agent serial --dev $XAXIS_PORT   -v3 &
+    ros2 run micro_ros_agent micro_ros_agent serial --dev $ZE_PORT      -v3 &
+    ros2 run micro_ros_agent micro_ros_agent serial --dev $ZL_PORT      -v3 &
+    sleep 3
+    echo "Starting coordinator..."
+    python3 ~/risc_ws/src/risc_control/bim_coordinator.py &
+    echo "All started. Run: ./risc.sh hmi"
+    ;;
+
+  "stop-all")
+    pkill -f micro_ros_agent || true
+    pkill -f bim_coordinator  || true
+    echo "All stopped."
+    ;;
+
+  "host-agent-tool")
+    source ~/microros_ws/install/local_setup.bash
+    ros2 run micro_ros_agent micro_ros_agent serial --dev $TOOLHEAD_PORT -v6
+    ;;
+  "host-agent-xaxis")
+    source ~/microros_ws/install/local_setup.bash
+    ros2 run micro_ros_agent micro_ros_agent serial --dev $XAXIS_PORT -v6
+    ;;
+  "host-agent-ze")
+    source ~/microros_ws/install/local_setup.bash
+    ros2 run micro_ros_agent micro_ros_agent serial --dev $ZE_PORT -v6
+    ;;
+  "host-agent-zl")
+    source ~/microros_ws/install/local_setup.bash
+    ros2 run micro_ros_agent micro_ros_agent serial --dev $ZL_PORT -v6
+    ;;
+  "host-coordinator")
+    python3 ~/risc_ws/src/risc_control/bim_coordinator.py
+    ;;
+
+
   "autostart")
+    echo "Killing any existing agents..."
+    docker exec $CONTAINER_NAME bash -c "pkill -f micro_ros_agent 2>/dev/null; pkill -f bim_coordinator 2>/dev/null; sleep 1"
     echo "Starting all agents..."
     docker exec -d $CONTAINER_NAME bash -c \
       "$ROS_SOURCE && $MICROROS_SOURCE && \
-       ros2 run micro_ros_agent micro_ros_agent serial --dev $TOOLHEAD_PORT -v3" 
+       ros2 run micro_ros_agent micro_ros_agent serial --dev $TOOLHEAD_PORT -v3"
     docker exec -d $CONTAINER_NAME bash -c \
       "$ROS_SOURCE && $MICROROS_SOURCE && \
        ros2 run micro_ros_agent micro_ros_agent serial --dev $XAXIS_PORT -v3"
@@ -58,6 +118,7 @@ case "$1" in
     docker exec -d $CONTAINER_NAME bash -c \
       "$ROS_SOURCE && $MICROROS_SOURCE && \
        ros2 run micro_ros_agent micro_ros_agent serial --dev $ZL_PORT -v3"
+    sleep 2
     echo "Starting coordinator..."
     docker exec -d $CONTAINER_NAME bash -c \
       "$ROS_SOURCE && python3 $COORD_PATH"
@@ -116,6 +177,9 @@ case "$1" in
   # ---------------------------------------------------------------------------
   "monitor-tool")
     docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && ros2 topic echo /toolhead_status"
+    ;;
+  "monitor-rotation")
+    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && ros2 topic echo /toolhead_status --field data[2]"
     ;;
   "monitor-xaxis")
     docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && ros2 topic echo /xaxis_status"
