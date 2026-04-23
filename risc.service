@@ -1,0 +1,52 @@
+# /etc/systemd/system/risc.service
+#
+# Starts the Docker container, all micro-ROS agents, the coordinator,
+# and the HMI fullscreen on boot -- no login required.
+#
+# Install:
+#   sudo cp risc.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable risc.service
+#   sudo systemctl start risc.service
+#
+# Logs:
+#   journalctl -u risc.service -f
+
+[Unit]
+Description=RiSC 1.0 Autonomous Brick Layer
+After=network.target docker.service graphical.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=risc
+WorkingDirectory=/home/risc/risc_ws
+
+# allow X11 access from root (needed for docker display forwarding)
+ExecStartPre=/usr/bin/xhost +local:root
+
+# start container (will no-op if already running)
+ExecStart=/bin/bash -c 'docker start risc_main || /home/risc/risc_ws/risc.sh up'
+
+# wait for docker to be ready
+ExecStart=/bin/sleep 5
+
+# start all agents + coordinator in background
+ExecStart=/bin/bash /home/risc/risc_ws/risc.sh autostart
+
+# wait for agents to connect
+ExecStart=/bin/sleep 3
+
+# launch HMI fullscreen on host display
+ExecStart=/bin/bash -c 'DISPLAY=:0 python3 /home/risc/risc_ws/scripts/hmi_main.py'
+
+ExecStop=/bin/bash /home/risc/risc_ws/risc.sh stop
+
+Restart=on-failure
+RestartSec=10
+Environment=DISPLAY=:0
+Environment=RISC_WS=/risc_ws
+
+[Install]
+WantedBy=graphical.target

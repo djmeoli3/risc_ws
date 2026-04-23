@@ -1,21 +1,80 @@
 #!/bin/bash
 
 CONTAINER_NAME="risc_main"
-XAXIS_PORT="/dev/ttyACM0"
-TOOLHEAD_PORT="/dev/ttyACM1"
-ZE_PORT="/dev/ttyACM2"
-ZL_PORT="/dev/ttyACM3"
+
+# ---------------------------------------------------------------------------
+# port names -- set by udev rules in /etc/udev/rules.d/99-risc.rules
+# these are stable symlinks regardless of plug order
+# ---------------------------------------------------------------------------
+XAXIS_PORT="/dev/risc_xaxis"
+TOOLHEAD_PORT="/dev/risc_toolhead"
+ZE_PORT="/dev/risc_ze"
+ZL_PORT="/dev/risc_zl"
 
 ROS_SOURCE="source /opt/ros/humble/setup.bash && source /risc_ws/install/local_setup.bash"
+MICROROS_SOURCE="source /microros_ws/install/local_setup.bash"
+COORD_PATH="/risc_ws/src/risc_control/bim_coordinator.py"
+HMI_PATH="/risc_ws/scripts/hmi_main.py"
 
 case "$1" in
+
+  # ---------------------------------------------------------------------------
+  # container
+  # ---------------------------------------------------------------------------
   "up")
     docker rm -f $CONTAINER_NAME 2>/dev/null
     docker build -t risc_image .
-    docker run -dit --name $CONTAINER_NAME --privileged -v /dev:/dev -v /dev/bus/usb:/dev/bus/usb -v $(pwd):/risc_ws risc_image /bin/bash
+    docker run -dit \
+      --name $CONTAINER_NAME \
+      --privileged \
+      --network host \
+      -v /dev:/dev \
+      -v /dev/bus/usb:/dev/bus/usb \
+      -v $(pwd):/risc_ws \
+      -e RISC_WS=/risc_ws \
+      risc_image /bin/bash
+    echo "Container started."
     ;;
 
-# --- FLASHING ---
+  "stop")
+    docker stop $CONTAINER_NAME
+    ;;
+
+  # ---------------------------------------------------------------------------
+  # autostart -- launches all agents + coordinator in background
+  # called by systemd on boot, or manually for a full system start
+  # ---------------------------------------------------------------------------
+  "autostart")
+    echo "Starting all agents..."
+    docker exec -d $CONTAINER_NAME bash -c \
+      "$ROS_SOURCE && $MICROROS_SOURCE && \
+       ros2 run micro_ros_agent micro_ros_agent serial --dev $TOOLHEAD_PORT -v3" 
+    docker exec -d $CONTAINER_NAME bash -c \
+      "$ROS_SOURCE && $MICROROS_SOURCE && \
+       ros2 run micro_ros_agent micro_ros_agent serial --dev $XAXIS_PORT -v3"
+    docker exec -d $CONTAINER_NAME bash -c \
+      "$ROS_SOURCE && $MICROROS_SOURCE && \
+       ros2 run micro_ros_agent micro_ros_agent serial --dev $ZE_PORT -v3"
+    docker exec -d $CONTAINER_NAME bash -c \
+      "$ROS_SOURCE && $MICROROS_SOURCE && \
+       ros2 run micro_ros_agent micro_ros_agent serial --dev $ZL_PORT -v3"
+    echo "Starting coordinator..."
+    docker exec -d $CONTAINER_NAME bash -c \
+      "$ROS_SOURCE && python3 $COORD_PATH"
+    echo "Autostart complete."
+    ;;
+
+  # ---------------------------------------------------------------------------
+  # hmi -- launch hmi fullscreen on host (outside docker, needs display)
+  # ---------------------------------------------------------------------------
+  "hmi")
+    xhost +local:root 2>/dev/null
+    cd /home/risc/risc_ws/scripts && python3 hmi_main.py
+    ;;
+
+  # ---------------------------------------------------------------------------
+  # flashing
+  # ---------------------------------------------------------------------------
   "tool-flash")
     docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/toolhead && pio run -e tool_fsm --target upload"
     ;;
@@ -29,21 +88,32 @@ case "$1" in
     docker exec -it $CONTAINER_NAME bash -c "cd /risc_ws/firmware/zL && pio run -e zl_fsm --target upload"
     ;;
 
-  # --- AGENTS ---
+  # ---------------------------------------------------------------------------
+  # agents (foreground, for debugging)
+  # ---------------------------------------------------------------------------
   "agent-tool")
-    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && ros2 run micro_ros_agent micro_ros_agent serial --dev $TOOLHEAD_PORT -v6"
+    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && $MICROROS_SOURCE && ros2 run micro_ros_agent micro_ros_agent serial --dev $TOOLHEAD_PORT -v6"
     ;;
   "agent-xaxis")
-    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && ros2 run micro_ros_agent micro_ros_agent serial --dev $XAXIS_PORT -v6"
+    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && $MICROROS_SOURCE && ros2 run micro_ros_agent micro_ros_agent serial --dev $XAXIS_PORT -v6"
     ;;
   "agent-ze")
-    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && ros2 run micro_ros_agent micro_ros_agent serial --dev $ZE_PORT -v6"
+    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && $MICROROS_SOURCE && ros2 run micro_ros_agent micro_ros_agent serial --dev $ZE_PORT -v6"
     ;;
   "agent-zl")
-    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && ros2 run micro_ros_agent micro_ros_agent serial --dev $ZL_PORT -v6"
+    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && $MICROROS_SOURCE && ros2 run micro_ros_agent micro_ros_agent serial --dev $ZL_PORT -v6"
     ;;
 
-  # --- MONITORING ---
+  # ---------------------------------------------------------------------------
+  # coordinator (foreground, for debugging)
+  # ---------------------------------------------------------------------------
+  "coordinator")
+    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && python3 $COORD_PATH"
+    ;;
+
+  # ---------------------------------------------------------------------------
+  # monitoring
+  # ---------------------------------------------------------------------------
   "monitor-tool")
     docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && ros2 topic echo /toolhead_status"
     ;;
@@ -63,48 +133,21 @@ case "$1" in
     docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && ros2 topic list"
     ;;
 
-  # --- CONTROL ---
   "manual")
     docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && python3 /risc_ws/src/risc_control/scripts/manual_control.py"
     ;;
-  "coordinator")
-    docker exec -it $CONTAINER_NAME bash -c "$ROS_SOURCE && python3 /risc_ws/src/risc_control/bim_coordinator.py"
-  ;;
-
-  "stop")
-    docker stop $CONTAINER_NAME
-    ;;
 
   *)
-    echo "BrickBot System Control"
+    echo "RiSC 1.0 System Control"
     echo "------------------------"
     echo "Usage: ./risc.sh {command}"
     echo ""
-    echo "CONTAINER:"
-    echo "  up             Build and start the Docker container"
-    echo "  stop           Stop the Docker container"
-    echo ""
-    echo "FLASHING:"
-    echo "  tool-flash     Upload firmware to Toolhead"
-    echo "  xaxis-flash    Upload firmware to X-Axis"
-    echo "  ze-flash       Upload firmware to Z-East pillar"
-    echo "  zl-flash       Upload firmware to Z-Low pillar"
-    echo ""
-    echo "AGENTS (Background micro-ROS communication):"
-    echo "  agent-tool     Start Agent for Toolhead ($TOOLHEAD_PORT)"
-    echo "  agent-xaxis    Start Agent for X-Axis ($XAXIS_PORT)"
-    echo "  agent-ze       Start Agent for Z-East ($ZE_PORT)"
-    echo "  agent-zl       Start Agent for Z-Low ($ZL_PORT)"
-    echo ""
-    echo "MONITORING (Live data views):"
-    echo "  monitor-tool   View live Toolhead status"
-    echo "  monitor-xaxis  View live X-Axis status"
-    echo "  monitor-ze     View live Z-East status"
-    echo "  monitor-zl     View live Z-Low status"
-    echo "  monitor-all    List all active ROS 2 topics"
-    echo ""
-    echo "CONTROL:"
-    echo "  coordinator    Launch Automated FSM"
-    echo "  manual         Launch manual terminal controller"
+    echo "CONTAINER:    up | stop"
+    echo "AUTOSTART:    autostart          (agents + coordinator, background)"
+    echo "HMI:          hmi               (fullscreen on host display)"
+    echo "FLASHING:     tool-flash | xaxis-flash | ze-flash | zl-flash"
+    echo "AGENTS:       agent-tool | agent-xaxis | agent-ze | agent-zl"
+    echo "COORDINATOR:  coordinator        (foreground)"
+    echo "MONITORING:   monitor-tool | monitor-xaxis | monitor-ze | monitor-zl | monitor-all"
     ;;
 esac

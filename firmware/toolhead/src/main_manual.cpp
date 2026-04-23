@@ -73,7 +73,8 @@ void subscription_callback(const void * msgin) {
         }
 
         case 'g': 
-            if (val == 1) gripper.write(179);
+            if (val == 2) gripper.write(179);
+            else if (val == 1) gripper.write(140); //179, 120
             else if (val == 0) gripper.write(80);
             else gripper.write((int)val);
             break;
@@ -97,7 +98,7 @@ void setup() {
     pinMode(ROTATE_ENA_PIN, OUTPUT);
     pinMode(EXTRACTOR_PIN, OUTPUT);
     
-    digitalWrite(SWING_ENA_PIN, HIGH);
+    //digitalWrite(SWING_ENA_PIN, HIGH);
     digitalWrite(ROTATE_ENA_PIN, HIGH);
 
     Wire.begin(); Wire.setClock(400000);
@@ -140,10 +141,6 @@ void loop() {
         float tempR = readRawEncoder(Wire);
         if (tempR != -999) currentRotateRaw = tempR;
 
-        f1 = analogRead(FORCE_1_PIN);
-        f2 = analogRead(FORCE_2_PIN);
-        f3 = analogRead(FORCE_3_PIN);
-        f4 = analogRead(FORCE_4_PIN);
         
         lastSensorRead = millis();
     }
@@ -182,8 +179,7 @@ void loop() {
     static uint32_t lastPub = 0;
     if (millis() - lastPub > 100) { 
         String status = "S:" + String(currentSwingRaw, 1) + 
-                        " R:" + String(currentRotateRaw, 1) + 
-                        " F:" + String(f1) + "," + String(f2) + "," + String(f3) + "," + String(f4);
+                        " R:" + String(currentRotateRaw, 1);
         
         snprintf(msg_pub.data.data, msg_pub.data.capacity, "%s", status.c_str());
         msg_pub.data.size = strlen(msg_pub.data.data);

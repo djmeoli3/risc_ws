@@ -10,17 +10,14 @@
 #include "config.h"
 #include "risc_bus.h"
 
-// --- CONSTANTS ---
-const float GEAR_RATIO = 7.2;         
-const float STEPS_PER_DEGREE = 64.0;  
-
-// Objects
+// --- OBJECTS ---
 AccelStepper swing(AccelStepper::DRIVER, SWING_STEP_PIN, SWING_DIR_PIN);
 AccelStepper rotate(AccelStepper::DRIVER, ROTATE_STEP_PIN, ROTATE_DIR_PIN);
 Servo gripper;
+Servo valve_servo;
 IntervalTimer motorTimer; 
 
-// ROS 2 Objects
+// --- ROS 2 ---
 rcl_subscription_t subscriber;
 rcl_publisher_t publisher;
 std_msgs__msg__Float32MultiArray cmd_msg;
@@ -30,23 +27,42 @@ rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_node_t node;
 
-static float s_buf[11];
-static float c_buf[15];
+static float s_buf[12];
+static float c_buf[17];
 
-volatile float live_swing_target = SWING_UP_RAW; 
+// --- STATE VARIABLES ---
+volatile float live_swing_target = 0.0; 
 volatile float live_rot_target = 0.0;
+volatile int live_state = -1;
 volatile bool live_grip_open = false;
 volatile bool live_extractor_on = false;
+volatile bool buzzer_req = false;
+
 float currentSwingRaw = 0, currentRotateRaw = 0;
 float sErr = 0, rErr = 0;
-bool stepper_is_homed = false; 
+bool rotHomed = false;
+bool swingHomed = false;
 
-// Interrupt for consistent step timing
+bool swing_at_target = false;
+float last_swing_target = -1.0;
+
+// --- NEW: INTERNAL COORDINATION TIMERS ---
+uint32_t swing_dwell_start = 0;
+uint32_t retract_dwell_start = 0;
+uint32_t valve_delay_start = 0;
+
+const int FILTER_WINDOW = 5;
+float swing_history[FILTER_WINDOW] = {0};
+int filter_idx = 0;
+float smoothedSwingRaw = 0;
+
+// --- MOTOR INTERRUPT ---
 void motorTick() {
     swing.runSpeed();
     rotate.runSpeed();
 }
 
+// --- ENCODER HELPER ---
 float readRawEncoder(TwoWire &bus) {
     bus.beginTransmission(AS5600_ADDR);
     bus.write(0x0E); 
@@ -61,19 +77,14 @@ float readRawEncoder(TwoWire &bus) {
 
 // --- STARTUP HOMING ---
 void performStartupHome() {
-    bool rotHomed = false;
-    bool swingHomed = false;
-    
-    delay(500); 
-    while (readRawEncoder(Wire1) == -999 || readRawEncoder(Wire) == -999) { delay(10); }
 
-    swing.setMaxSpeed(400 * MICROSTEPS); 
-    rotate.setMaxSpeed(400 * MICROSTEPS);
+    swing.setMaxSpeed(800 * MICROSTEPS); 
+    rotate.setMaxSpeed(800 * MICROSTEPS);
     
-    digitalWrite(SWING_ENA_PIN, HIGH); 
+    digitalWrite(SWING_ENA_PIN, HIGH);
     digitalWrite(ROTATE_ENA_PIN, HIGH);
     
-    while (!rotHomed || !swingHomed) {
+    if (!rotHomed || !swingHomed) {
         float tempS = readRawEncoder(Wire1);
         float tempR = readRawEncoder(Wire);
         
@@ -85,8 +96,8 @@ void performStartupHome() {
                 float dynamicOffset = 180.0;
                 if (abs(sError) < 20.0) dynamicOffset = abs(sError) * 18.0; 
                 
-                float sSpeed = (sError * 30 + (sError > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS;
-                swing.setSpeed(constrain(sSpeed, -3500*MICROSTEPS, 3500*MICROSTEPS));
+                float sSpeed = (sError * 30 + (sError > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS * 2;
+                swing.setSpeed(constrain(sSpeed, -7000*MICROSTEPS, 7000*MICROSTEPS));
                 swing.runSpeed();
             } else { 
                 swing.setSpeed(0); swing.runSpeed();
@@ -103,53 +114,46 @@ void performStartupHome() {
                 float dynamicOffset = 180.0;
                 if (abs(hErr) < 10.0) dynamicOffset = abs(hErr) * 18.0;
 
-                float rSpeed = -(hErr * 55 + (hErr > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS;
-                rotate.setSpeed(constrain(rSpeed, -3500*MICROSTEPS, 3500*MICROSTEPS));
+                float rSpeed = -(hErr * 55 + (hErr > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS * 2;
+                rotate.setSpeed(constrain(rSpeed, -7000*MICROSTEPS, 7000*MICROSTEPS));
                 rotate.runSpeed();
             } else {
                 rotate.setSpeed(0); rotate.runSpeed();
                 rotate.setCurrentPosition(0); 
                 rotHomed = true;
-                stepper_is_homed = true;
             }
         }
-        delayMicroseconds(20); 
     }
 }
 
+// --- ROS CALLBACK ---
 void subscription_callback(const void * msgin) {
     const std_msgs__msg__Float32MultiArray * msg = (const std_msgs__msg__Float32MultiArray *)msgin;
-    if (msg->data.size >= 12) {
+    if (msg->data.size >= 15) {
+        live_state        = (int)msg->data.data[CMD_STATE_REQUEST];
+        live_rot_target   = msg->data.data[CMD_TOOL_ROT_TARGET];
         live_swing_target = msg->data.data[CMD_TOOL_SWING_TARGET];
-        live_rot_target   = msg->data.data[CMD_TOOL_ROT_TARGET]; 
         live_grip_open    = (msg->data.data[CMD_GRIP_OPEN] > 0.5f);
         live_extractor_on = (msg->data.data[CMD_EXTRACTOR_ON] > 0.5f);
+        buzzer_req        = (msg->data.data[CMD_TRIGGER_HOMING] > 0.5f);
     }
 }
 
+// --- SETUP ---
 void setup() {
-    pinMode(LED_PIN, OUTPUT);
-    pinMode(SWING_ENA_PIN, OUTPUT); 
-    pinMode(ROTATE_ENA_PIN, OUTPUT);
+    pinMode(SWING_ENA_PIN, OUTPUT); pinMode(ROTATE_ENA_PIN, OUTPUT);
     pinMode(LIMIT_SWITCH_GRIPPER, INPUT_PULLUP);
-    digitalWrite(SWING_ENA_PIN, HIGH); 
-    digitalWrite(ROTATE_ENA_PIN, HIGH);
+    pinMode(EXTRACTOR_PIN, OUTPUT);
     
     Wire.begin(); Wire1.begin();
-    
-    swing.setMaxSpeed(400 * MICROSTEPS); 
-    rotate.setMaxSpeed(400 * MICROSTEPS);
-    
+    swing.setMaxSpeed(800 * MICROSTEPS); rotate.setMaxSpeed(800 * MICROSTEPS);
     gripper.attach(GRIPPER_SERVO_PIN);
-    
+    valve_servo.attach(ADHESIVE_VALVE_PIN);
+    valve_servo.write(VALVE_CLOSED_POS);
     motorTimer.begin(motorTick, 100); 
 
-    status_msg.data.data = s_buf;
-    status_msg.data.size = 11;
-    status_msg.data.capacity = 11;
-    cmd_msg.data.data = c_buf;
-    cmd_msg.data.size = 0; 
-    cmd_msg.data.capacity = 15;
+    status_msg.data.data = s_buf; status_msg.data.size = 12; status_msg.data.capacity = 12;
+    cmd_msg.data.data = c_buf; cmd_msg.data.size = 0; cmd_msg.data.capacity = 17;
 
     set_microros_transports();
     allocator = rcl_get_default_allocator();
@@ -163,75 +167,215 @@ void setup() {
     rclc_executor_init(&executor, &support.context, 1, &allocator);
     rclc_executor_add_subscription(&executor, &subscriber, &cmd_msg, &subscription_callback, ON_NEW_DATA);
 
-    performStartupHome();
 }
 
+// --- MAIN LOOP ---
 void loop() {
+
     rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
 
-    float ts = readRawEncoder(Wire1); if (ts != -999) currentSwingRaw = ts;
-    float tr = readRawEncoder(Wire); if (tr != -999) currentRotateRaw = tr;
     
-    // --- SWING LOGIC ---
-    sErr = live_swing_target - currentSwingRaw;
-    if (live_swing_target > 180 && currentSwingRaw < 100) sErr = (live_swing_target - 360) - currentSwingRaw;
-    else if (live_swing_target < 100 && currentSwingRaw > 200) sErr = (live_swing_target + 360) - currentSwingRaw;
-    
-    if (abs(sErr) > TOLERANCE) {
-        float dynamicOffset = 180.0;
-        if (abs(sErr) < 10.0) dynamicOffset = abs(sErr) * 18.0; 
-        
-        float sSpeed = (sErr * 55 + (sErr > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS;
-        swing.setSpeed(constrain(sSpeed, -3500*MICROSTEPS, 3500*MICROSTEPS));
-        swing.runSpeed();
-    } else { swing.setSpeed(0); swing.runSpeed(); }
-
-    // --- ROTATION LOGIC ---
-    if (live_rot_target == 0.0) {
-        float homeErr = ROTATE_HOME_RAW - currentRotateRaw;
-        if (homeErr > 180) homeErr -= 360;
-        if (homeErr < -180) homeErr += 360;
-
-        if (abs(homeErr) > TOLERANCE) {
-            float dynamicOffset = 180.0;
-            if (abs(homeErr) < 10.0) dynamicOffset = abs(homeErr) * 18.0;
-
-            float rSpeed = -(homeErr * 55 + (homeErr > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS;
-            rotate.setSpeed(constrain(rSpeed, -3500*MICROSTEPS, 3500*MICROSTEPS));
-            rotate.runSpeed();
-            stepper_is_homed = false; 
-        } else {
-            rotate.setSpeed(0); rotate.runSpeed();
-            if (!stepper_is_homed) {
-                rotate.setCurrentPosition(0); 
-                stepper_is_homed = true;
+    // --- UPDATED SENSOR READ WITH FILTERING ---
+    static uint32_t lastSensorRead = 0;
+    if (millis() - lastSensorRead > 20) { 
+        float tempS = readRawEncoder(Wire1); 
+        if (tempS != -999) {
+            // SNAP HISTORY on 360/0 wrap-around to prevent "phantom mid-point" averages
+            float lastVal = swing_history[filter_idx == 0 ? FILTER_WINDOW-1 : filter_idx-1];
+            if (abs(tempS - lastVal) > 200.0) {
+                for(int i = 0; i < FILTER_WINDOW; i++) swing_history[i] = tempS;
             }
-            rErr = 0;
-        }
-    } else {
-        //proportional speed to degree target
-        float bErr = live_rot_target - (rotate.currentPosition() / STEPS_PER_DEGREE);
-        
-        float dynamicOffset = 180.0;
-        if (abs(bErr) < 10.0) dynamicOffset = abs(bErr) * 18.0;
 
-        float bSpeed = (bErr * 55 + (bErr > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS;
-        rotate.setSpeed(constrain(bSpeed, -3500*MICROSTEPS, 3500*MICROSTEPS));
-        rErr = bErr;
-        stepper_is_homed = false;
+            swing_history[filter_idx] = tempS;
+            filter_idx = (filter_idx + 1) % FILTER_WINDOW;
+
+            float sum = 0;
+            for(int i = 0; i < FILTER_WINDOW; i++) sum += swing_history[i];
+            smoothedSwingRaw = sum / FILTER_WINDOW;
+            currentSwingRaw = tempS; 
+        }
+        
+        float tempR = readRawEncoder(Wire); 
+        if (tempR != -999) currentRotateRaw = tempR;
+        lastSensorRead = millis();
+    }
+    // --- NEW: DYNAMIC SPEED LIMITS ---
+    float currentMaxSpeed = 3500.0; // Your standard "fast" speed
+    float speedMultiplier = 1.0;    // Standard power
+
+    if (live_state == 12) {
+        currentMaxSpeed = 50.0;   // Slow "Crawl" for adhesive pumping
+        speedMultiplier = 0.2;      // Lower torque/gain for smoother motion
     }
 
-    gripper.write(live_grip_open ? 179 : 80);
+    switch (live_state) { 
+        case 0:
+            performStartupHome();
+            break;
+            
+        case 1:
+            if (buzzer_req) {
+                swing.stop();
+                rotate.stop();
+            } else {
+                performStartupHome();
+            }
+            break;
+        case 4: case 12: case 13:
+            rotate.setSpeed(0);
+            break;
+            
+        case 7: case 8: 
+            gripper.write(130);
+            break;
+
+        case 99: case -1: // SAFETY STOP 
+            swing.setSpeed(0);
+            rotate.setSpeed(0);
+            break;
+
+        default:
+            break;
+    }
+
+    if (live_state != -1 && live_state != 99 && !buzzer_req) {
+        // Latch Reset Logic
+        static int last_processed_state = -1;
+        if (abs(live_swing_target - last_swing_target) > 2.0 || live_state != last_processed_state) {
+            swing_at_target = false;
+            last_swing_target = live_swing_target;
+            last_processed_state = live_state;
+        }
+
+        float effective_target = live_swing_target;
+
+        // Dwell Coordination (Target Ramping)
+        if (live_state == 12) {
+            if (abs(smoothedSwingRaw - 266.5) < TOLERANCE && swing_dwell_start == 0) swing_dwell_start = millis();
+            // During dwell, target follows arm to keep sErr at 0 (prevents speed spike)
+            if (swing_dwell_start > 0 && (millis() - swing_dwell_start < 1000)) effective_target = smoothedSwingRaw;
+        } else { swing_dwell_start = 0; }
+
+        if (live_state == 13) {
+            if (retract_dwell_start == 0) retract_dwell_start = millis();
+            if (millis() - retract_dwell_start < 1000) effective_target = smoothedSwingRaw; 
+        } else { retract_dwell_start = 0; }
+
+        // --- MECHANICAL CONSTRAINT ERROR MATH ---
+        sErr = effective_target - smoothedSwingRaw;
+
+        // Force the "Long Way" around to avoid the hard stop
+        // If we are at 68.9 and want to go to 248:
+        // Raw sErr is ~179. If we want it to go DOWN past 0 to reach 248:
+        if (effective_target > 200.0 && smoothedSwingRaw < 100.0) {
+            // Target is High, we are Low. Force negative error to swing down past 0.
+            sErr = (effective_target - 360.0) - smoothedSwingRaw;
+        }
+        // If we are at 248 and want to go to 68.9:
+        else if (effective_target < 100.0 && smoothedSwingRaw > 200.0) {
+            // Target is Low, we are High. Force positive error to swing up past 360.
+            sErr = (effective_target + 360.0) - smoothedSwingRaw;
+        }
+
+        if (!swing_at_target) {
+            if (abs(sErr) > TOLERANCE) {
+                float dynamicOffset = (abs(sErr) < 10.0) ? abs(sErr) * 18.0 : 180.0; 
+                float sSpeed = (sErr * 55 + (sErr > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS * 2 * speedMultiplier;
+                swing.setSpeed(constrain(sSpeed, -currentMaxSpeed * MICROSTEPS * 2, currentMaxSpeed * MICROSTEPS * 2));
+            } else { 
+                swing.setSpeed(0);
+                // Don't latch while waiting for coordination timers
+                bool dwelling = (live_state == 12 && (millis() - swing_dwell_start < 1000)) || 
+                                (live_state == 13 && (millis() - retract_dwell_start < 1000));
+                if (!dwelling) swing_at_target = true; 
+            }
+        } else {
+            swing.setSpeed(0);
+        }
+    }
+
+    // --- ROTATION CONTROL ---
+    if (live_state != -1 && live_state != 99 && !buzzer_req) {
+        if (live_rot_target == ROTATE_HOME_RAW) {
+            // Return to Encoder Home (Open Loop to Encoder)
+            float homeErr = ROTATE_HOME_RAW - currentRotateRaw;
+            if (homeErr > 180) homeErr -= 360;
+            if (homeErr < -180) homeErr += 360;
+
+            if (abs(homeErr) > TOLERANCE) {
+                float dynamicOffset = (abs(homeErr) < 10.0) ? abs(homeErr) * 18.0 : 180.0;
+                float rSpeed = -(homeErr * 55 + (homeErr > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS * 2;
+                rotate.setSpeed(constrain(rSpeed, -7000*MICROSTEPS, 7000*MICROSTEPS));
+                rotHomed = false; 
+            } else {
+                rotate.setSpeed(0);
+                if (!rotHomed) {
+                    rotate.setCurrentPosition(0); // Sync steps to encoder home
+                    rotHomed = true;
+                }
+                rErr = 0;
+            }
+        } else {
+            // Precise Step-based rotation for Brick Theta
+            float currentDeg = (float)rotate.currentPosition() / ROTATION_STEPS_PER_DEGREE;
+            rErr = live_rot_target - currentDeg;
+            
+            float dynamicOffset = (abs(rErr) < 10.0) ? abs(rErr) * 18.0 : 180.0;
+            float rSpeed = (rErr * 55 + (rErr > 0 ? dynamicOffset : -dynamicOffset)) * MICROSTEPS * 2;
+            rotate.setSpeed(constrain(rSpeed, -7000*MICROSTEPS, 7000*MICROSTEPS));
+            rotHomed = false; 
+        }
+    }
+
+    // --- ACTUATORS ---
+    if (live_state != 7 && live_state != 8)
+        gripper.write(live_grip_open ? 170 : 115);
+    
+    // --- ADHESIVE VALVE CONTROL (with 0.5s Delay) ---
+    if (live_state == 12 || live_state == 13) {
+        // 1. Start the timer the moment we enter State 12
+        if (valve_delay_start == 0) {
+            valve_delay_start = millis();
+        }
+
+        // 2. Only open the valve after the delay has passed
+        if (millis() - valve_delay_start >= 0) {
+            valve_servo.write(VALVE_OPEN_POS);
+        }
+    } else if (live_state == 0) {
+        valve_servo.write(VALVE_OPEN_POS);
+    } else {
+        // 3. Reset everything when we leave State 12
+        valve_servo.write(VALVE_CLOSED_POS);
+        valve_delay_start = 0;
+    }
+
     analogWrite(EXTRACTOR_PIN, live_extractor_on ? 200 : 0);
 
+// --- STATUS PUBLISHING (Final Fix for Ready Signal) ---
     static uint32_t lastP = 0;
+    static int last_state = -1;
     if (millis() - lastP > 50) {
-        status_msg.data.data[STAT_HW_ID]         = 1.0f;
-        status_msg.data.data[STAT_POS_ALPHA]     = currentSwingRaw; 
-        status_msg.data.data[STAT_POS_BETA]      = currentRotateRaw;
-        status_msg.data.data[GRIPPER_DETECT]     = (digitalRead(LIMIT_SWITCH_GRIPPER) == HIGH) ? 1.0f : 0.0f; 
-        bool atGoal = (abs(sErr) <= TOLERANCE && abs(rErr) <= TOLERANCE);
-        status_msg.data.data[STAT_TASK_COMPLETE] = atGoal ? 1.0f : 0.0f;
+        status_msg.data.data[STAT_HW_ID] = 1.0f;
+        status_msg.data.data[STAT_POS_ALPHA] = currentSwingRaw; 
+        status_msg.data.data[STAT_POS_BETA] = currentRotateRaw;
+        status_msg.data.data[STAT_GRIPPER_DETECT] = (digitalRead(LIMIT_SWITCH_GRIPPER) == HIGH) ? 1.0f : 0.0f; 
+        
+        const float READY_TOLERANCE = 2.0; 
+        bool atGoal = (abs(sErr) <= READY_TOLERANCE); 
+
+        bool currently_dwelling = (live_state == 12 && (millis() - swing_dwell_start < 1000)) || 
+                                  (live_state == 13 && (millis() - retract_dwell_start < 0));
+        
+        if (currently_dwelling) atGoal = false;
+        
+        if (live_state != last_state) {
+            status_msg.data.data[STAT_TASK_COMPLETE] = 0.0f;
+            last_state = live_state;
+        } else {
+            status_msg.data.data[STAT_TASK_COMPLETE] = (atGoal || swing_at_target) ? 1.0f : 0.0f;
+        }
+
         rcl_publish(&publisher, &status_msg, NULL);
         lastP = millis();
     }
