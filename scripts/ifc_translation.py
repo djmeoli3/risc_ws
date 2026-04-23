@@ -10,7 +10,7 @@ import sys
 # global adjustables
 # ---------------------------------------------------------------------------
 VERTICAL_ADHESIVE_GAP = 0.0
-ACTUAL_BRICK_HEIGHT   = 39.3
+ACTUAL_BRICK_HEIGHT   = 39.5
 
 # ---------------------------------------------------------------------------
 # brick physical dimensions
@@ -111,8 +111,8 @@ def extract_bricks_to_csv(ifc_file_path, output_csv):
 
     normalized_data = []
     for b in raw_data:
-        nx      = round(b['x'] - min_x, 3)
-        ny      = round(b['y'] - min_y, 3)
+        nx      = round(b['x'] - min_x, 2)
+        ny      = math.floor((b['y'] - min_y) * 100) / 100  # floor to 0.01mm
         nz_raw  = b['z'] - min_z
 
         layer_index = int(round(nz_raw / ACTUAL_BRICK_HEIGHT))
