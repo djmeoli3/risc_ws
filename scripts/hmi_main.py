@@ -398,10 +398,10 @@ class RISCHMI(QMainWindow):
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet(
             "font-size: 13px; font-weight: bold; color: #ff9800; letter-spacing: 3px; "
-            "background: #1a1a1a; padding: 12px; border-bottom: 2px solid #e65100;")
+            "background: #1a1a1a; padding: 6px; border-bottom: 2px solid #e65100;")
         left_layout.addWidget(self.status_label)
 
-        left_layout.addSpacing(16)
+        left_layout.addSpacing(6)
 
         # Axis position readouts
         pos_frame = QFrame()
@@ -438,7 +438,7 @@ class RISCHMI(QMainWindow):
         pos_layout.addWidget(z_box)
         left_layout.addWidget(pos_frame)
 
-        left_layout.addSpacing(16)
+        left_layout.addSpacing(6)
 
         # Jog section label
         jog_title = QLabel("MOTION CONTROL")
@@ -447,7 +447,7 @@ class RISCHMI(QMainWindow):
             "color: #e65100; font-size: 11px; letter-spacing: 4px; font-weight: bold; padding: 4px 0;")
         left_layout.addWidget(jog_title)
 
-        left_layout.addSpacing(4)
+        left_layout.addSpacing(2)
 
         # Jog buttons — cross layout
         jog_frame = QFrame()
@@ -459,10 +459,10 @@ class RISCHMI(QMainWindow):
         grid = QGridLayout()
         grid.setSpacing(6)
 
-        self.btn_z_up    = self._btn("▲  Z UP",    "#bf360c", height=70)
-        self.btn_z_down  = self._btn("▼  Z DOWN",  "#bf360c", height=70)
-        self.btn_x_left  = self._btn("◀  X LEFT",  "#bf360c", height=70)
-        self.btn_x_right = self._btn("X RIGHT  ▶", "#bf360c", height=70)
+        self.btn_z_up    = self._btn("▲  Z UP",    "#bf360c", height=52)
+        self.btn_z_down  = self._btn("▼  Z DOWN",  "#bf360c", height=52)
+        self.btn_x_left  = self._btn("◀  X LEFT",  "#bf360c", height=52)
+        self.btn_x_right = self._btn("X RIGHT  ▶", "#bf360c", height=52)
 
         _jog_style = ("font-size: 20px; font-weight: bold; border-radius: 4px; "
                       "letter-spacing: 2px; background-color: #bf360c; color: #fff; "
@@ -498,9 +498,9 @@ class RISCHMI(QMainWindow):
             "color: #e65100; font-size: 11px; letter-spacing: 4px; font-weight: bold; padding: 2px 0;")
         left_layout.addWidget(pump_section_label)
 
-        left_layout.addSpacing(4)
+        left_layout.addSpacing(2)
 
-        self.btn_pump = self._btn("● PUMP  OFF", "#bf360c", height=60, checkable=True)
+        self.btn_pump = self._btn("● PUMP  OFF", "#bf360c", height=44, checkable=True)
         self.btn_pump.setEnabled(False)
         self.btn_pump.setStyleSheet(
             "font-size: 15px; font-weight: bold; letter-spacing: 2px; border-radius: 4px; "
@@ -529,7 +529,7 @@ class RISCHMI(QMainWindow):
         robot_label = QLabel()
         robot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _pix = QPixmap(_logo_path).scaledToHeight(
-            100, Qt.TransformationMode.SmoothTransformation)
+            70, Qt.TransformationMode.SmoothTransformation)
         robot_label.setPixmap(_pix)
 
         risc_label = QLabel("RiSC 1.0")
@@ -554,7 +554,7 @@ class RISCHMI(QMainWindow):
         logo_layout.addWidget(divider_line)
         right_layout.addWidget(logo_frame)
 
-        right_layout.addSpacing(8)
+        right_layout.addSpacing(4)
 
         # Section title
         pump_title = QLabel("SYSTEM STATUS")
@@ -577,7 +577,7 @@ class RISCHMI(QMainWindow):
         pump_state_layout.addWidget(self.pump_debug_label)
         right_layout.addWidget(pump_state_frame)
 
-        right_layout.addSpacing(16)
+        right_layout.addSpacing(6)
 
         # System info panel — static labels showing axis info
         info_frame = QFrame()
@@ -693,7 +693,7 @@ class RISCHMI(QMainWindow):
             QHeaderView.ResizeMode.Stretch)
         self.preview_table.setStyleSheet(
             "background: #1a1a1a; color: #e0e0e0; gridline-color: #2a2a2a; border: none;")
-        self.start_build_btn = self._btn("▶  START BUILD", "#7b1d1d", height=64)
+        self.start_build_btn = self._btn("▶  START BUILD", "#7b1d1d", height=44)
         self.start_build_btn.setVisible(False)
         self.start_build_btn.clicked.connect(self.start_robot_mission)
         right.addWidget(right_label)
@@ -813,7 +813,7 @@ class RISCHMI(QMainWindow):
         t.setStyleSheet("color: #e65100; font-size: 11px; letter-spacing: 2px; font-weight: bold;")
         v = QLabel(value)
         v.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        v.setStyleSheet("color: #fff; font-size: 24px; font-weight: bold; font-family: 'Courier New', monospace;")
+        v.setStyleSheet("color: #fff; font-size: 18px; font-weight: bold; font-family: 'Courier New', monospace;")
         vbox.addWidget(t)
         vbox.addWidget(v)
         frame._value_label = v
