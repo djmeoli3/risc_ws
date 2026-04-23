@@ -72,7 +72,7 @@ class BIMCoordinator(Node):
         self.Z_SAFETY_MARGIN = 60.0  
         
         # CSV written by HMI at <ws>/scripts/output_csvs/current_build.csv
-        ws_root = os.environ.get('RISC_WS', '/risc_ws')
+        ws_root = os.environ.get('RISC_WS', '/home/risc/risc_ws')
         self.csv_path = os.path.join(ws_root, 'scripts', 'output_csvs', 'current_build.csv')
         
         self.brick_queue   = []
