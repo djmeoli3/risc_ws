@@ -213,18 +213,18 @@ class BIMCoordinator(Node):
         y_val = 0.0
         
         if self.current_brick:
-            offset = self.current_brick['drop_offset']
+            drop  = self.current_brick['drop_offset']
+            xover = self.current_brick['x_overshoot']
             y_val = self.current_brick['y']
-            
 
             if self.state in [RobotState.X_OVERSHOOT, RobotState.RELEASE_BRICK]:
                 x_target = self.current_brick['x']
-                z_target = self.current_brick['z'] + offset
+                z_target = self.current_brick['z'] + drop
             elif self.state == RobotState.LOWER_AND_PLACE:
-                x_target = self.current_brick['x'] + offset
-                z_target = self.current_brick['z'] + offset
+                x_target = self.current_brick['x'] + xover
+                z_target = self.current_brick['z'] + drop
             else:
-                x_target = self.current_brick['x'] + offset
+                x_target = self.current_brick['x'] + xover
                 z_target = self.current_brick['z'] + self.Z_SAFETY_MARGIN
 
         # ---------------------------------------------------------------------------

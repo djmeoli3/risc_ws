@@ -311,8 +311,8 @@ void loop() {
             state13_entry = 0;
             if (live_adhesive_on) {
                 if (pump_delay == 0) pump_delay = millis();
-                if (millis() - pump_delay > 200) {
-                    pump.setMaxSpeed(PUMP_SPEED_STEPS);
+                if (millis() - pump_delay > 1500) {
+                    pump.setMaxSpeed(PUMP_SPEED_STEPS*0.75f);
                     pump.moveTo(pump.currentPosition() < 0 ? 1000000 : pump.currentPosition() + 1000000);
                 }
             } else {

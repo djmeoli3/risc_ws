@@ -78,7 +78,7 @@ def extract_bricks_to_csv(ifc_file_path, output_csv):
         bricks.extend(model.by_type(t))
 
     # physical constants
-    X_MAX_LIMIT             = 700.0
+    X_MAX_LIMIT             = 800.0
     Z_MAX_LIMIT             = 1000.0
     JAW_LX_THRESHOLD        = 110.0
     BODY_LY_THRESHOLD       = 75.0

@@ -6,10 +6,10 @@ CONTAINER_NAME="risc_main"
 # port names -- set by udev rules in /etc/udev/rules.d/99-risc.rules
 # these are stable symlinks regardless of plug order
 # ---------------------------------------------------------------------------
-XAXIS_PORT="/dev/risc_xaxis"
-TOOLHEAD_PORT="/dev/risc_toolhead"
-ZE_PORT="/dev/risc_ze"
-ZL_PORT="/dev/risc_zl"
+XAXIS_PORT="/dev/ttyACM0"
+TOOLHEAD_PORT="/dev/ttyACM1"
+ZE_PORT="/dev/ttyACM2"
+ZL_PORT="/dev/ttyACM3"
 
 ROS_SOURCE="source /opt/ros/humble/setup.bash && source /risc_ws/install/local_setup.bash"
 MICROROS_SOURCE="source /microros_ws/install/local_setup.bash"
