@@ -68,7 +68,7 @@ class BIMCoordinator(Node):
         self.TARGET_SWING_PUMP = 266.0
         self.TARGET_SWING_PUMP_END = 275.5
         self.TARGET_SWING_DOWN = 68.9  
-        self.ROTATE_HOME_RAW = 268.0
+        self.ROTATE_HOME_RAW = 266.5
         self.Z_SAFETY_MARGIN = 60.0  
         
         # CSV written by HMI at <ws>/scripts/output_csvs/current_build.csv
