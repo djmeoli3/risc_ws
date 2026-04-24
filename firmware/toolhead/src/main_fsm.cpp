@@ -242,7 +242,7 @@ void loop() {
             break;
             
         case 7: case 8: 
-            gripper.write(152);
+            gripper.write(145);
             break;
 
         case 99: case -1: // safety stop
@@ -343,7 +343,7 @@ void loop() {
     // actuators
     // ---------------------------------------------------------------------------
     if (live_state != 7 && live_state != 8)
-        gripper.write(live_grip_open ? 180 : 50);
+        gripper.write(live_grip_open ? 200 : 122);
     
     // adhesive valve
     if (live_state == 12 || live_state == 13) {
