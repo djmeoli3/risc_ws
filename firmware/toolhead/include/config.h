@@ -38,8 +38,8 @@ const float MAX_SPEED_CONSTRAIN = 3500.0;
 const int MOTOR_TICK_INTERVAL = 100;
 
 // --- GRIPPER SERVO POSITIONS ---
-const int GRIP_OPEN_POS = 179;
-const int GRIP_CLOSED_POS = 80;
+const int GRIP_OPEN_POS = 184;
+const int GRIP_CLOSED_POS = 85;
 
 // --- STEPPER TUNING ---
 const float ROTATE_ACCEL = 1000.0;

@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTableWidget, QTableWidgetItem, QMessageBox,
                              QHeaderView, QTabWidget, QProgressBar, QGridLayout,
                              QSizePolicy, QFrame, QFileDialog)
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread, QTimer, QSize
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtGui import QPainter, QColor, QImage, QPixmap, QFont, QTransform
 
+import queue
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Bool
@@ -154,6 +155,10 @@ class ROSWorker(QObject):
     progress_update = pyqtSignal(int, int)
     node_ready      = pyqtSignal()
 
+    def __init__(self):
+        super().__init__()
+        self._pub_queue = queue.Queue()
+
     def run(self):
         rclpy.init()
         self.node = Node('hmi_ros_worker')
@@ -170,7 +175,11 @@ class ROSWorker(QObject):
         self.node_ready.emit()
         # spin_once loop -- keeps thread responsive
         while rclpy.ok():
-            rclpy.spin_once(self.node, timeout_sec=0.05)
+            rclpy.spin_once(self.node, timeout_sec=0.01)
+            # process publish queue from main thread
+            while not self._pub_queue.empty():
+                fn = self._pub_queue.get_nowait()
+                fn()
 
     def _status_cb(self, msg):
         # [state, placed, total]
@@ -188,19 +197,19 @@ class ROSWorker(QObject):
     def publish_manual(self, d: list):
         msg = Float32MultiArray()
         msg.data = d
-        self.manual_cmd_pub.publish(msg)
+        self._pub_queue.put(lambda m=msg: self.manual_cmd_pub.publish(m))
 
     def publish_start(self, val: bool):
         msg = Bool(); msg.data = val
-        self.trigger_pub.publish(msg)
+        self._pub_queue.put(lambda m=msg: self.trigger_pub.publish(m))
 
     def publish_pause(self, val: bool):
         msg = Bool(); msg.data = val
-        self.pause_pub.publish(msg)
+        self._pub_queue.put(lambda m=msg: self.pause_pub.publish(m))
 
     def publish_cancel(self):
         msg = Bool(); msg.data = True
-        self.cancel_pub.publish(msg)
+        self._pub_queue.put(lambda m=msg: self.cancel_pub.publish(m))
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +680,8 @@ class RISCHMI(QMainWindow):
         self.file_list = QListWidget()
         self.file_list.setStyleSheet(
             "background: #1a1a1a; color: #e0e0e0; border: 1px solid #2a2a2a; border-radius: 4px;")
+        self.file_list.setSpacing(6)
+        self.file_list.setIconSize(QSize(1, 36))  # force row height
         self.translate_btn = self._btn("⚙  GENERATE COORDINATES", "#e65100", height=44)
         self.translate_btn.clicked.connect(self.run_translation)
         self.delete_btn    = self._btn("🗑  DELETE SELECTED IFC",  "#4a0000", height=44)
@@ -749,6 +760,24 @@ class RISCHMI(QMainWindow):
         pause_layout.addWidget(self.btn_resume)
         pause_layout.addWidget(self.btn_cancel)
         left.addWidget(self.pause_widget)
+
+        # ---------------------------------------------------------------------------
+        # home depot button -- purely for fun, no ROS dependency
+        # ---------------------------------------------------------------------------
+        self._hd_playing = False
+        self._hd_process = None
+        self.btn_hd = QPushButton("🏠  THE DEPOT")
+        self.btn_hd.setMinimumHeight(36)
+        self.btn_hd.setStyleSheet("""
+            QPushButton {
+                font-size: 11px; font-weight: bold; letter-spacing: 2px;
+                border-radius: 4px; background: #f57c00; color: #fff;
+                border: 1px solid #e65100;
+            }
+            QPushButton:pressed { background: #bf360c; border: 1px solid #bf360c; }
+        """)
+        self.btn_hd.clicked.connect(self._on_depot_press)
+        left.addWidget(self.btn_hd)
 
         # Progress bar
         self.progress_bar = QProgressBar()
@@ -936,6 +965,27 @@ class RISCHMI(QMainWindow):
         toast.move(x, y)
         toast.show()
         toast.raise_()
+
+    def _on_depot_press(self):
+        import subprocess, os
+        ws  = os.environ.get('RISC_WS', os.path.expanduser('~/risc_ws'))
+        mp3 = os.path.join(ws, 'scripts', 'home_depot.mp3')
+        wav = os.path.join(ws, 'scripts', 'home_depot.wav')
+        # kill existing playback then restart
+        if hasattr(self, '_hd_process') and self._hd_process:
+            try: self._hd_process.terminate()
+            except: pass
+        try:
+            self._hd_process = subprocess.Popen(
+                ["ffplay", "-nodisp", "-autoexit", mp3],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            try:
+                self._hd_process = subprocess.Popen(
+                    ["aplay", wav],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except:
+                pass
 
     def _on_pause_clicked(self):
         self.is_paused = True

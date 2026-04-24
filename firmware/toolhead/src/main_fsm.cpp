@@ -10,14 +10,16 @@
 #include "config.h"
 #include "risc_bus.h"
 
-// --- OBJECTS ---
+// ---------------------------------------------------------------------------
+// objects
+// ---------------------------------------------------------------------------
 AccelStepper swing(AccelStepper::DRIVER, SWING_STEP_PIN, SWING_DIR_PIN);
 AccelStepper rotate(AccelStepper::DRIVER, ROTATE_STEP_PIN, ROTATE_DIR_PIN);
 Servo gripper;
 Servo valve_servo;
 IntervalTimer motorTimer; 
 
-// --- ROS 2 ---
+// ros objects
 rcl_subscription_t subscriber;
 rcl_publisher_t publisher;
 std_msgs__msg__Float32MultiArray cmd_msg;
@@ -30,7 +32,9 @@ rcl_node_t node;
 static float s_buf[12];
 static float c_buf[17];
 
-// --- STATE VARIABLES ---
+// ---------------------------------------------------------------------------
+// state
+// ---------------------------------------------------------------------------
 volatile float live_swing_target = 0.0; 
 volatile float live_rot_target = 0.0;
 volatile int live_state = -1;
@@ -46,7 +50,7 @@ bool swingHomed = false;
 bool swing_at_target = false;
 float last_swing_target = -1.0;
 
-// --- NEW: INTERNAL COORDINATION TIMERS ---
+// coordination timers
 uint32_t swing_dwell_start = 0;
 uint32_t retract_dwell_start = 0;
 uint32_t valve_delay_start = 0;
@@ -56,13 +60,17 @@ float swing_history[FILTER_WINDOW] = {0};
 int filter_idx = 0;
 float smoothedSwingRaw = 0;
 
-// --- MOTOR INTERRUPT ---
+// ---------------------------------------------------------------------------
+// motor isr
+// ---------------------------------------------------------------------------
 void motorTick() {
     swing.runSpeed();
     rotate.runSpeed();
 }
 
-// --- ENCODER HELPER ---
+// ---------------------------------------------------------------------------
+// encoder helper
+// ---------------------------------------------------------------------------
 float readRawEncoder(TwoWire &bus) {
     bus.beginTransmission(AS5600_ADDR);
     bus.write(0x0E); 
@@ -75,7 +83,9 @@ float readRawEncoder(TwoWire &bus) {
     return -999;
 }
 
-// --- STARTUP HOMING ---
+// ---------------------------------------------------------------------------
+// startup homing
+// ---------------------------------------------------------------------------
 void performStartupHome() {
 
     swing.setMaxSpeed(800 * MICROSTEPS); 
@@ -119,14 +129,16 @@ void performStartupHome() {
                 rotate.runSpeed();
             } else {
                 rotate.setSpeed(0); rotate.runSpeed();
-                rotate.setCurrentPosition(0); 
+                rotate.setCurrentPosition(0);
                 rotHomed = true;
             }
         }
     }
 }
 
-// --- ROS CALLBACK ---
+// ---------------------------------------------------------------------------
+// ros callback
+// ---------------------------------------------------------------------------
 void subscription_callback(const void * msgin) {
     const std_msgs__msg__Float32MultiArray * msg = (const std_msgs__msg__Float32MultiArray *)msgin;
     if (msg->data.size >= 15) {
@@ -139,7 +151,9 @@ void subscription_callback(const void * msgin) {
     }
 }
 
-// --- SETUP ---
+// ---------------------------------------------------------------------------
+// setup
+// ---------------------------------------------------------------------------
 void setup() {
     pinMode(SWING_ENA_PIN, OUTPUT); pinMode(ROTATE_ENA_PIN, OUTPUT);
     pinMode(LIMIT_SWITCH_GRIPPER, INPUT_PULLUP);
@@ -169,18 +183,20 @@ void setup() {
 
 }
 
-// --- MAIN LOOP ---
+// ---------------------------------------------------------------------------
+// main loop
+// ---------------------------------------------------------------------------
 void loop() {
 
     rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
 
     
-    // --- UPDATED SENSOR READ WITH FILTERING ---
+    // sensor read + filter
     static uint32_t lastSensorRead = 0;
     if (millis() - lastSensorRead > 20) { 
         float tempS = readRawEncoder(Wire1); 
         if (tempS != -999) {
-            // SNAP HISTORY on 360/0 wrap-around to prevent "phantom mid-point" averages
+            // snap history on 360 wrap
             float lastVal = swing_history[filter_idx == 0 ? FILTER_WINDOW-1 : filter_idx-1];
             if (abs(tempS - lastVal) > 200.0) {
                 for(int i = 0; i < FILTER_WINDOW; i++) swing_history[i] = tempS;
@@ -199,13 +215,13 @@ void loop() {
         if (tempR != -999) currentRotateRaw = tempR;
         lastSensorRead = millis();
     }
-    // --- NEW: DYNAMIC SPEED LIMITS ---
-    float currentMaxSpeed = 3500.0; // Your standard "fast" speed
-    float speedMultiplier = 1.0;    // Standard power
+    // dynamic speed limits
+    float currentMaxSpeed = 3500.0;
+    float speedMultiplier = 1.0;
 
     if (live_state == 12) {
-        currentMaxSpeed = 50.0;   // Slow "Crawl" for adhesive pumping
-        speedMultiplier = 0.2;      // Lower torque/gain for smoother motion
+        currentMaxSpeed = 50.0;
+        speedMultiplier = 0.2;
     }
 
     switch (live_state) { 
@@ -226,10 +242,10 @@ void loop() {
             break;
             
         case 7: case 8: 
-            gripper.write(130);
+            gripper.write(152);
             break;
 
-        case 99: case -1: // SAFETY STOP 
+        case 99: case -1: // safety stop
             swing.setSpeed(0);
             rotate.setSpeed(0);
             break;
@@ -239,7 +255,7 @@ void loop() {
     }
 
     if (live_state != -1 && live_state != 99 && !buzzer_req) {
-        // Latch Reset Logic
+        // latch reset
         static int last_processed_state = -1;
         if (abs(live_swing_target - last_swing_target) > 2.0 || live_state != last_processed_state) {
             swing_at_target = false;
@@ -249,10 +265,10 @@ void loop() {
 
         float effective_target = live_swing_target;
 
-        // Dwell Coordination (Target Ramping)
+        // dwell coordination
         if (live_state == 12) {
             if (abs(smoothedSwingRaw - 266.5) < TOLERANCE && swing_dwell_start == 0) swing_dwell_start = millis();
-            // During dwell, target follows arm to keep sErr at 0 (prevents speed spike)
+
             if (swing_dwell_start > 0 && (millis() - swing_dwell_start < 1000)) effective_target = smoothedSwingRaw;
         } else { swing_dwell_start = 0; }
 
@@ -261,19 +277,15 @@ void loop() {
             if (millis() - retract_dwell_start < 1000) effective_target = smoothedSwingRaw; 
         } else { retract_dwell_start = 0; }
 
-        // --- MECHANICAL CONSTRAINT ERROR MATH ---
+        // error math
         sErr = effective_target - smoothedSwingRaw;
 
-        // Force the "Long Way" around to avoid the hard stop
-        // If we are at 68.9 and want to go to 248:
-        // Raw sErr is ~179. If we want it to go DOWN past 0 to reach 248:
+        // force long-way around hard stop
         if (effective_target > 200.0 && smoothedSwingRaw < 100.0) {
-            // Target is High, we are Low. Force negative error to swing down past 0.
+
             sErr = (effective_target - 360.0) - smoothedSwingRaw;
         }
-        // If we are at 248 and want to go to 68.9:
         else if (effective_target < 100.0 && smoothedSwingRaw > 200.0) {
-            // Target is Low, we are High. Force positive error to swing up past 360.
             sErr = (effective_target + 360.0) - smoothedSwingRaw;
         }
 
@@ -284,7 +296,7 @@ void loop() {
                 swing.setSpeed(constrain(sSpeed, -currentMaxSpeed * MICROSTEPS * 2, currentMaxSpeed * MICROSTEPS * 2));
             } else { 
                 swing.setSpeed(0);
-                // Don't latch while waiting for coordination timers
+                // no latch during dwell
                 bool dwelling = (live_state == 12 && (millis() - swing_dwell_start < 1000)) || 
                                 (live_state == 13 && (millis() - retract_dwell_start < 1000));
                 if (!dwelling) swing_at_target = true; 
@@ -294,10 +306,11 @@ void loop() {
         }
     }
 
-    // --- ROTATION CONTROL ---
+    // ---------------------------------------------------------------------------
+    // rotation control
+    // ---------------------------------------------------------------------------
     if (live_state != -1 && live_state != 99 && !buzzer_req) {
         if (live_rot_target == ROTATE_HOME_RAW) {
-            // Return to Encoder Home (Open Loop to Encoder)
             float homeErr = ROTATE_HOME_RAW - currentRotateRaw;
             if (homeErr > 180) homeErr -= 360;
             if (homeErr < -180) homeErr += 360;
@@ -310,13 +323,12 @@ void loop() {
             } else {
                 rotate.setSpeed(0);
                 if (!rotHomed) {
-                    rotate.setCurrentPosition(0); // Sync steps to encoder home
+                    rotate.setCurrentPosition(0);
                     rotHomed = true;
                 }
                 rErr = 0;
             }
-        } else {
-            // Precise Step-based rotation for Brick Theta
+        } else { // step-based brick theta
             float currentDeg = (float)rotate.currentPosition() / ROTATION_STEPS_PER_DEGREE;
             rErr = live_rot_target - currentDeg;
             
@@ -327,42 +339,46 @@ void loop() {
         }
     }
 
-    // --- ACTUATORS ---
+    // ---------------------------------------------------------------------------
+    // actuators
+    // ---------------------------------------------------------------------------
     if (live_state != 7 && live_state != 8)
-        gripper.write(live_grip_open ? 170 : 115);
+        gripper.write(live_grip_open ? 180 : 50);
     
-    // --- ADHESIVE VALVE CONTROL (with 0.5s Delay) ---
+    // adhesive valve
     if (live_state == 12 || live_state == 13) {
-        // 1. Start the timer the moment we enter State 12
+
         if (valve_delay_start == 0) {
             valve_delay_start = millis();
         }
 
-        // 2. Only open the valve after the delay has passed
+
         if (millis() - valve_delay_start >= 0) {
             valve_servo.write(VALVE_OPEN_POS);
         }
     } else if (live_state == 0) {
         valve_servo.write(VALVE_OPEN_POS);
     } else {
-        // 3. Reset everything when we leave State 12
+
         valve_servo.write(VALVE_CLOSED_POS);
         valve_delay_start = 0;
     }
 
     analogWrite(EXTRACTOR_PIN, live_extractor_on ? 200 : 0);
 
-// --- STATUS PUBLISHING (Final Fix for Ready Signal) ---
+    // ---------------------------------------------------------------------------
+    // status publish @ 20hz
+    // ---------------------------------------------------------------------------
     static uint32_t lastP = 0;
     static int last_state = -1;
     if (millis() - lastP > 50) {
         status_msg.data.data[STAT_HW_ID] = 1.0f;
-        status_msg.data.data[STAT_POS_ALPHA] = currentSwingRaw; 
+        status_msg.data.data[STAT_POS_ALPHA] = currentSwingRaw;
         status_msg.data.data[STAT_POS_BETA] = currentRotateRaw;
-        status_msg.data.data[STAT_GRIPPER_DETECT] = (digitalRead(LIMIT_SWITCH_GRIPPER) == HIGH) ? 1.0f : 0.0f; 
+        status_msg.data.data[STAT_GRIPPER_DETECT] = (digitalRead(LIMIT_SWITCH_GRIPPER) == HIGH) ? 1.0f : 0.0f;
         
-        const float READY_TOLERANCE = 2.0; 
-        bool atGoal = (abs(sErr) <= READY_TOLERANCE); 
+        const float READY_TOLERANCE = 2.0;
+        bool atGoal = (abs(sErr) <= READY_TOLERANCE);
 
         bool currently_dwelling = (live_state == 12 && (millis() - swing_dwell_start < 1000)) || 
                                   (live_state == 13 && (millis() - retract_dwell_start < 0));
