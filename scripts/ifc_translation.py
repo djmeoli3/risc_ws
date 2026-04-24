@@ -10,7 +10,7 @@ import sys
 # global adjustables
 # ---------------------------------------------------------------------------
 VERTICAL_ADHESIVE_GAP = 0.0
-ACTUAL_BRICK_HEIGHT   = 38.8
+ACTUAL_BRICK_HEIGHT   = 39.8
 
 # ---------------------------------------------------------------------------
 # brick physical dimensions
