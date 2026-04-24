@@ -682,9 +682,9 @@ class RISCHMI(QMainWindow):
             "background: #1a1a1a; color: #e0e0e0; border: 1px solid #2a2a2a; border-radius: 4px;")
         self.file_list.setSpacing(6)
         self.file_list.setIconSize(QSize(1, 36))  # force row height
-        self.translate_btn = self._btn("⚙  GENERATE COORDINATES", "#e65100", height=44)
+        self.translate_btn = self._btn("⚙  GENERATE COORDINATES", "#e65100", height=36)
         self.translate_btn.clicked.connect(self.run_translation)
-        self.delete_btn    = self._btn("🗑  DELETE SELECTED IFC",  "#4a0000", height=44)
+        self.delete_btn    = self._btn("🗑  DELETE SELECTED IFC",  "#4a0000", height=36)
         self.delete_btn.clicked.connect(self.delete_ifc)
         left.addLayout(header_row)
         left.addWidget(self.file_list)
@@ -704,7 +704,7 @@ class RISCHMI(QMainWindow):
             QHeaderView.ResizeMode.Stretch)
         self.preview_table.setStyleSheet(
             "background: #1a1a1a; color: #e0e0e0; gridline-color: #2a2a2a; border: none;")
-        self.start_build_btn = self._btn("▶  START BUILD", "#7b1d1d", height=44)
+        self.start_build_btn = self._btn("▶  START BUILD", "#7b1d1d", height=36)
         self.start_build_btn.setVisible(False)
         self.start_build_btn.clicked.connect(self.start_robot_mission)
         right.addWidget(right_label)
@@ -722,7 +722,7 @@ class RISCHMI(QMainWindow):
 
         # --- Left panel: stats + build map ---
         left = QVBoxLayout()
-        left.setSpacing(8)
+        left.setSpacing(4)
 
         # Stats row
         stats_frame = QFrame()
