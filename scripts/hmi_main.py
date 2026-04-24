@@ -968,10 +968,8 @@ class RISCHMI(QMainWindow):
 
     def _on_depot_press(self):
         import subprocess, os
-        ws  = os.environ.get('RISC_WS', os.path.expanduser('~/risc_ws'))
-        mp3 = os.path.join(ws, 'scripts', 'home_depot.mp3')
-        wav = os.path.join(ws, 'scripts', 'home_depot.wav')
-        # kill existing playback then restart
+        mp3 = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'home_depot.mp3')
+        wav = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'home_depot.wav')
         if hasattr(self, '_hd_process') and self._hd_process:
             try: self._hd_process.terminate()
             except: pass
